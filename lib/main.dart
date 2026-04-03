@@ -1,4 +1,9 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+
+import 'part_request_api.dart';
 
 void main() {
   runApp(const PartApprovalDesktopApp());
@@ -35,33 +40,241 @@ class ApprovalHomePage extends StatefulWidget {
 }
 
 class _ApprovalHomePageState extends State<ApprovalHomePage> {
+  static const _refreshInterval = Duration(seconds: 20);
+
+  final PartRequestApi _api = PartRequestApi();
+  final TextEditingController _emailController = TextEditingController(
+    text: 'tech@printer-manager.com',
+  );
+  final TextEditingController _passwordController = TextEditingController();
+
   bool _isLoggedIn = false;
+  bool _isLoggingIn = false;
+  bool _isLoadingRequests = false;
+  bool _isUpdatingStatus = false;
   String _query = '';
   String _activeMenu = 'Part Request Approval';
+  String? _loginError;
+  String? _requestError;
+  DateTime? _lastUpdatedAt;
+  Timer? _refreshTimer;
 
-  final List<PartRequest> _requests = demoRequests;
-  PartRequest? _selectedRequest = demoRequests.first;
+  List<PartRequest> _requests = const [];
+  PartRequest? _selectedRequest;
 
-  void _handleRefresh() {
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleLogin() async {
+    FocusScope.of(context).unfocus();
     setState(() {
-      if (_filteredRequests.isNotEmpty) {
-        _selectedRequest = _filteredRequests.first;
-      }
+      _isLoggingIn = true;
+      _loginError = null;
     });
 
+    try {
+      await _api.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoggedIn = true;
+      });
+
+      await _loadRequests(showSnackBar: false);
+      _startAutoRefresh();
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _loginError = error.message);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () =>
+            _loginError = 'Unable to sign in. ${_friendlyLoginFailure(error)}',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoggingIn = false);
+      }
+    }
+  }
+
+  Future<void> _loadRequests({
+    bool silent = false,
+    bool showSnackBar = true,
+  }) async {
+    if (_isLoadingRequests) return;
+
+    if (!silent) {
+      setState(() {
+        _isLoadingRequests = true;
+        _requestError = null;
+      });
+    }
+
+    try {
+      final payload = await _api.listPartRequests();
+      final requests = payload.map(PartRequest.fromJson).toList()
+        ..sort((a, b) => b.createdDate.compareTo(a.createdDate));
+      final previousIds = _requests.map((item) => item.id).toSet();
+      final newItems = requests
+          .where((item) => !previousIds.contains(item.id))
+          .length;
+      final nextSelected = _resolveSelectedRequest(requests);
+
+      if (!mounted) return;
+
+      setState(() {
+        _requests = requests;
+        _selectedRequest = nextSelected;
+        _lastUpdatedAt = DateTime.now();
+        _requestError = null;
+      });
+
+      if (showSnackBar) {
+        final message = newItems > 0
+            ? 'Request list refreshed. $newItems new request${newItems == 1 ? '' : 's'} found.'
+            : 'Request list refreshed';
+        _showSnackBar(message);
+      }
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _requestError = error.message);
+      if (showSnackBar) {
+        _showSnackBar(error.message);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      const fallbackMessage = 'Unable to load part requests right now.';
+      setState(() => _requestError = fallbackMessage);
+      if (showSnackBar) {
+        _showSnackBar(fallbackMessage);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingRequests = false);
+      }
+    }
+  }
+
+  Future<void> _handleStatusChanged(
+    PartRequest request,
+    ApprovalStatus status,
+  ) async {
+    if (_isUpdatingStatus || request.status == status) return;
+
+    final originalStatus = request.status;
+    setState(() {
+      _isUpdatingStatus = true;
+      request.status = status;
+      _selectedRequest = request;
+    });
+
+    try {
+      final response = await _api.updatePartRequest(request.id, {
+        'status': status.apiValue,
+      });
+
+      final updated = PartRequest.fromJson(response).mergeWithFallback(request);
+
+      if (!mounted) return;
+
+      setState(() {
+        _replaceRequest(updated);
+        _selectedRequest = updated;
+      });
+      _showSnackBar('Status updated to ${status.shortLabel}.');
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        request.status = originalStatus;
+      });
+      _showSnackBar(error.message);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        request.status = originalStatus;
+      });
+      _showSnackBar('Unable to update the request status.');
+    } finally {
+      if (mounted) {
+        setState(() => _isUpdatingStatus = false);
+      }
+    }
+  }
+
+  void _replaceRequest(PartRequest updated) {
+    final index = _requests.indexWhere((item) => item.id == updated.id);
+    if (index == -1) return;
+    final next = [..._requests];
+    next[index] = updated;
+    _requests = next;
+  }
+
+  PartRequest? _resolveSelectedRequest(List<PartRequest> requests) {
+    if (requests.isEmpty) return null;
+    final selectedId = _selectedRequest?.id;
+    if (selectedId == null) return requests.first;
+    return requests.cast<PartRequest?>().firstWhere(
+      (item) => item?.id == selectedId,
+      orElse: () => requests.first,
+    );
+  }
+
+  void _startAutoRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(_refreshInterval, (_) {
+      _loadRequests(silent: true, showSnackBar: false);
+    });
+  }
+
+  void _handleLogout() {
+    _refreshTimer?.cancel();
+    setState(() {
+      _isLoggedIn = false;
+      _isLoggingIn = false;
+      _isLoadingRequests = false;
+      _isUpdatingStatus = false;
+      _query = '';
+      _requestError = null;
+      _loginError = null;
+      _lastUpdatedAt = null;
+      _requests = const [];
+      _selectedRequest = null;
+    });
+  }
+
+  void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Request list refreshed'),
-        duration: Duration(seconds: 1),
-      ),
+      SnackBar(content: Text(message), duration: const Duration(seconds: 2)),
     );
   }
 
   List<PartRequest> get _filteredRequests {
-    if (_query.isEmpty) return _requests;
+    final base = switch (_activeMenu) {
+      'Pending' =>
+        _requests
+            .where((request) => request.status == ApprovalStatus.pending)
+            .toList(),
+      'Returned' =>
+        _requests
+            .where((request) => request.status == ApprovalStatus.returned)
+            .toList(),
+      _ => _requests,
+    };
+
+    if (_query.isEmpty) return base;
 
     final normalized = _query.toLowerCase();
-    return _requests.where((request) {
+    return base.where((request) {
       final haystack = [
         request.idLabel,
         request.partName,
@@ -70,6 +283,8 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
         request.machine,
         request.category,
         request.requestedBy,
+        request.description,
+        request.remark,
       ].join(' ').toLowerCase();
       return haystack.contains(normalized);
     }).toList();
@@ -83,39 +298,44 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
         child: _isLoggedIn
             ? DashboardView(
                 requests: _filteredRequests,
+                allRequests: _requests,
                 selectedRequest: _selectedRequest,
                 activeMenu: _activeMenu,
                 query: _query,
+                isLoadingRequests: _isLoadingRequests,
+                isUpdatingStatus: _isUpdatingStatus,
+                requestError: _requestError,
+                lastUpdatedAt: _lastUpdatedAt,
+                refreshInterval: _refreshInterval,
                 onMenuSelected: (value) {
-                  setState(() => _activeMenu = value);
+                  setState(() {
+                    _activeMenu = value;
+                    _selectedRequest = _resolveSelectedRequest(
+                      _filteredRequests,
+                    );
+                  });
                 },
-                onLogout: () {
-                  setState(() => _isLoggedIn = false);
-                },
+                onLogout: _handleLogout,
                 onSearchChanged: (value) {
                   setState(() {
                     _query = value;
-                    if (!_filteredRequests.contains(_selectedRequest) &&
-                        _filteredRequests.isNotEmpty) {
-                      _selectedRequest = _filteredRequests.first;
-                    }
+                    _selectedRequest = _resolveSelectedRequest(
+                      _filteredRequests,
+                    );
                   });
                 },
                 onRequestSelected: (request) {
                   setState(() => _selectedRequest = request);
                 },
-                onStatusChanged: (request, status) {
-                  setState(() {
-                    request.status = status;
-                    _selectedRequest = request;
-                  });
-                },
-                onRefresh: _handleRefresh,
+                onStatusChanged: _handleStatusChanged,
+                onRefresh: () => _loadRequests(),
               )
             : LoginView(
-                onLogin: () {
-                  setState(() => _isLoggedIn = true);
-                },
+                emailController: _emailController,
+                passwordController: _passwordController,
+                isLoading: _isLoggingIn,
+                errorMessage: _loginError,
+                onLogin: _handleLogin,
               ),
       ),
     );
@@ -123,8 +343,19 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
 }
 
 class LoginView extends StatelessWidget {
-  const LoginView({super.key, required this.onLogin});
+  const LoginView({
+    super.key,
+    required this.emailController,
+    required this.passwordController,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onLogin,
+  });
 
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final bool isLoading;
+  final String? errorMessage;
   final VoidCallback onLogin;
 
   @override
@@ -147,7 +378,13 @@ class LoginView extends StatelessWidget {
                   children: [
                     _LoginCopy(compact: compact),
                     const SizedBox(height: 24),
-                    _LoginCard(onLogin: onLogin),
+                    _LoginCard(
+                      emailController: emailController,
+                      passwordController: passwordController,
+                      isLoading: isLoading,
+                      errorMessage: errorMessage,
+                      onLogin: onLogin,
+                    ),
                   ],
                 )
               : Row(
@@ -158,7 +395,16 @@ class LoginView extends StatelessWidget {
                         child: _LoginCopy(compact: compact),
                       ),
                     ),
-                    SizedBox(width: 420, child: _LoginCard(onLogin: onLogin)),
+                    SizedBox(
+                      width: 420,
+                      child: _LoginCard(
+                        emailController: emailController,
+                        passwordController: passwordController,
+                        isLoading: isLoading,
+                        errorMessage: errorMessage,
+                        onLogin: onLogin,
+                      ),
+                    ),
                   ],
                 );
 
@@ -188,10 +434,10 @@ class _LoginCopy extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'PART APPROVAL',
           style: TextStyle(
-            color: const Color(0xFF6F7685),
+            color: Color(0xFF6F7685),
             fontSize: 13,
             letterSpacing: 1.4,
             fontWeight: FontWeight.w700,
@@ -210,8 +456,10 @@ class _LoginCopy extends StatelessWidget {
         const SizedBox(height: 16),
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: compact ? 420 : 520),
-          child: const Text(
-            'Desktop-first workflow for technicians and approvers. Login opens the request list with quick status updates and approval detail.',
+          child: Text(
+            kIsWeb
+                ? 'This project should connect to the WOD mobile API, but browser login can be blocked by the backend CSRF policy. For the same behavior as WOD, run it as a desktop app on macOS, Windows, or Linux.'
+                : 'This desktop client now authenticates against the live mobile API, loads /api/mobile/part-request, and auto-refreshes so new requests submitted from another platform appear here without a restart.',
             style: TextStyle(
               color: Color(0xFF8A90A0),
               fontSize: 16,
@@ -225,8 +473,18 @@ class _LoginCopy extends StatelessWidget {
 }
 
 class _LoginCard extends StatelessWidget {
-  const _LoginCard({required this.onLogin});
+  const _LoginCard({
+    required this.emailController,
+    required this.passwordController,
+    required this.isLoading,
+    required this.errorMessage,
+    required this.onLogin,
+  });
 
+  final TextEditingController emailController;
+  final TextEditingController passwordController;
+  final bool isLoading;
+  final String? errorMessage;
   final VoidCallback onLogin;
 
   @override
@@ -250,17 +508,35 @@ class _LoginCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _InputBlock(
+            _EditableInputBlock(
               label: 'Email',
-              value: 'tech@printer-manager.com',
+              controller: emailController,
+              keyboardType: TextInputType.emailAddress,
+              onSubmitted: (_) => onLogin(),
             ),
             const SizedBox(height: 18),
-            const _InputBlock(label: 'Password', value: '••••••••••••'),
+            _EditableInputBlock(
+              label: 'Password',
+              controller: passwordController,
+              obscureText: true,
+              onSubmitted: (_) => onLogin(),
+            ),
+            if (errorMessage != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                errorMessage!,
+                style: const TextStyle(
+                  color: Color(0xFFA63D40),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: onLogin,
+                onPressed: isLoading ? null : onLogin,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF1E2330),
                   foregroundColor: Colors.white,
@@ -269,10 +545,19 @@ class _LoginCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
-                child: const Text(
-                  'Login',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
+                child: isLoading
+                    ? const SizedBox(
+                        height: 18,
+                        width: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text(
+                        'Login',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
               ),
             ),
           ],
@@ -286,9 +571,15 @@ class DashboardView extends StatelessWidget {
   const DashboardView({
     super.key,
     required this.requests,
+    required this.allRequests,
     required this.selectedRequest,
     required this.activeMenu,
     required this.query,
+    required this.isLoadingRequests,
+    required this.isUpdatingStatus,
+    required this.requestError,
+    required this.lastUpdatedAt,
+    required this.refreshInterval,
     required this.onMenuSelected,
     required this.onLogout,
     required this.onSearchChanged,
@@ -298,9 +589,15 @@ class DashboardView extends StatelessWidget {
   });
 
   final List<PartRequest> requests;
+  final List<PartRequest> allRequests;
   final PartRequest? selectedRequest;
   final String activeMenu;
   final String query;
+  final bool isLoadingRequests;
+  final bool isUpdatingStatus;
+  final String? requestError;
+  final DateTime? lastUpdatedAt;
+  final Duration refreshInterval;
   final ValueChanged<String> onMenuSelected;
   final VoidCallback onLogout;
   final ValueChanged<String> onSearchChanged;
@@ -311,10 +608,10 @@ class DashboardView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount = requests
+    final pendingCount = allRequests
         .where((request) => request.status != ApprovalStatus.done)
         .length;
-    final outstandingTotal = requests
+    final outstandingTotal = allRequests
         .where((request) => request.status != ApprovalStatus.done)
         .fold<double>(0, (sum, request) => sum + request.cost);
 
@@ -332,6 +629,11 @@ class DashboardView extends StatelessWidget {
           query: query,
           requests: requests,
           selectedRequest: selectedRequest,
+          isLoadingRequests: isLoadingRequests,
+          isUpdatingStatus: isUpdatingStatus,
+          requestError: requestError,
+          lastUpdatedAt: lastUpdatedAt,
+          refreshInterval: refreshInterval,
           onMenuSelected: onMenuSelected,
           onLogout: onLogout,
           onSearchChanged: onSearchChanged,
@@ -366,6 +668,11 @@ class _DashboardContent extends StatelessWidget {
     required this.query,
     required this.requests,
     required this.selectedRequest,
+    required this.isLoadingRequests,
+    required this.isUpdatingStatus,
+    required this.requestError,
+    required this.lastUpdatedAt,
+    required this.refreshInterval,
     required this.onMenuSelected,
     required this.onLogout,
     required this.onSearchChanged,
@@ -382,6 +689,11 @@ class _DashboardContent extends StatelessWidget {
   final String query;
   final List<PartRequest> requests;
   final PartRequest? selectedRequest;
+  final bool isLoadingRequests;
+  final bool isUpdatingStatus;
+  final String? requestError;
+  final DateTime? lastUpdatedAt;
+  final Duration refreshInterval;
   final ValueChanged<String> onMenuSelected;
   final VoidCallback onLogout;
   final ValueChanged<String> onSearchChanged;
@@ -472,11 +784,18 @@ class _DashboardContent extends StatelessWidget {
                       onLogout: onLogout,
                       onRefresh: onRefresh,
                       compact: compactHeader,
+                      isLoadingRequests: isLoadingRequests,
+                      lastUpdatedAt: lastUpdatedAt,
+                      refreshInterval: refreshInterval,
                     ),
                     const SizedBox(height: 18),
                     metrics,
                     const SizedBox(height: 18),
                     _Toolbar(query: query, onSearchChanged: onSearchChanged),
+                    if (requestError != null) ...[
+                      const SizedBox(height: 12),
+                      _ErrorBanner(message: requestError!),
+                    ],
                     const SizedBox(height: 18),
                   ];
 
@@ -510,12 +829,18 @@ class _DashboardContent extends StatelessWidget {
           RequestListPanel(
             requests: requests,
             selectedRequest: selectedRequest,
+            isLoadingRequests: isLoadingRequests,
+            isUpdatingStatus: isUpdatingStatus,
             onRequestSelected: onRequestSelected,
             onStatusChanged: onStatusChanged,
             expandList: false,
           ),
           const SizedBox(height: 18),
-          ApprovalDetailPanel(request: selectedRequest, scrollable: false),
+          ApprovalDetailPanel(
+            request: selectedRequest,
+            scrollable: false,
+            lastUpdatedAt: lastUpdatedAt,
+          ),
         ],
       );
     }
@@ -527,12 +852,20 @@ class _DashboardContent extends StatelessWidget {
           child: RequestListPanel(
             requests: requests,
             selectedRequest: selectedRequest,
+            isLoadingRequests: isLoadingRequests,
+            isUpdatingStatus: isUpdatingStatus,
             onRequestSelected: onRequestSelected,
             onStatusChanged: onStatusChanged,
           ),
         ),
         const SizedBox(height: 18),
-        Expanded(flex: 2, child: ApprovalDetailPanel(request: selectedRequest)),
+        Expanded(
+          flex: 2,
+          child: ApprovalDetailPanel(
+            request: selectedRequest,
+            lastUpdatedAt: lastUpdatedAt,
+          ),
+        ),
       ],
     );
   }
@@ -547,6 +880,8 @@ class _DashboardContent extends StatelessWidget {
             child: RequestListPanel(
               requests: requests,
               selectedRequest: selectedRequest,
+              isLoadingRequests: isLoadingRequests,
+              isUpdatingStatus: isUpdatingStatus,
               onRequestSelected: onRequestSelected,
               onStatusChanged: onStatusChanged,
               expandList: false,
@@ -558,6 +893,7 @@ class _DashboardContent extends StatelessWidget {
             child: ApprovalDetailPanel(
               request: selectedRequest,
               scrollable: false,
+              lastUpdatedAt: lastUpdatedAt,
             ),
           ),
         ],
@@ -572,6 +908,8 @@ class _DashboardContent extends StatelessWidget {
           child: RequestListPanel(
             requests: requests,
             selectedRequest: selectedRequest,
+            isLoadingRequests: isLoadingRequests,
+            isUpdatingStatus: isUpdatingStatus,
             onRequestSelected: onRequestSelected,
             onStatusChanged: onStatusChanged,
           ),
@@ -579,7 +917,10 @@ class _DashboardContent extends StatelessWidget {
         const SizedBox(width: 18),
         SizedBox(
           width: 300,
-          child: ApprovalDetailPanel(request: selectedRequest),
+          child: ApprovalDetailPanel(
+            request: selectedRequest,
+            lastUpdatedAt: lastUpdatedAt,
+          ),
         ),
       ],
     );
@@ -812,18 +1153,28 @@ class _DashboardHeader extends StatelessWidget {
     required this.onLogout,
     required this.onRefresh,
     required this.compact,
+    required this.isLoadingRequests,
+    required this.lastUpdatedAt,
+    required this.refreshInterval,
   });
 
   final VoidCallback onLogout;
   final VoidCallback onRefresh;
   final bool compact;
+  final bool isLoadingRequests;
+  final DateTime? lastUpdatedAt;
+  final Duration refreshInterval;
 
   @override
   Widget build(BuildContext context) {
-    final titleBlock = const Column(
+    final subtitle = lastUpdatedAt == null
+        ? 'Waiting for first sync.'
+        : 'Auto-refresh every ${refreshInterval.inSeconds}s. Last sync ${_formatTime(lastUpdatedAt!)}.';
+
+    final titleBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
+        const Text(
           'Part Request Approval',
           style: TextStyle(
             color: Color(0xFF16181D),
@@ -831,10 +1182,10 @@ class _DashboardHeader extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
-        SizedBox(height: 4),
+        const SizedBox(height: 4),
         Text(
-          'Monitor incoming requests and update approval status without leaving the list.',
-          style: TextStyle(color: Color(0xFF818898), fontSize: 13),
+          subtitle,
+          style: const TextStyle(color: Color(0xFF818898), fontSize: 13),
         ),
       ],
     );
@@ -857,17 +1208,23 @@ class _DashboardHeader extends StatelessWidget {
     );
 
     final refreshButton = OutlinedButton.icon(
-      onPressed: onRefresh,
+      onPressed: isLoadingRequests ? null : onRefresh,
       style: OutlinedButton.styleFrom(
         foregroundColor: const Color(0xFF3C4352),
         side: const BorderSide(color: Color(0xFFE3E6EF)),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       ),
-      icon: const Icon(Icons.refresh, size: 18),
-      label: const Text(
-        'Refresh',
-        style: TextStyle(fontWeight: FontWeight.w700),
+      icon: isLoadingRequests
+          ? const SizedBox(
+              height: 16,
+              width: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh, size: 18),
+      label: Text(
+        isLoadingRequests ? 'Refreshing' : 'Refresh',
+        style: const TextStyle(fontWeight: FontWeight.w700),
       ),
     );
 
@@ -961,6 +1318,8 @@ class _Toolbar extends StatelessWidget {
           ),
           alignment: Alignment.center,
           child: TextField(
+            controller: TextEditingController(text: query)
+              ..selection = TextSelection.collapsed(offset: query.length),
             onChanged: onSearchChanged,
             style: const TextStyle(fontSize: 13),
             decoration: const InputDecoration(
@@ -989,10 +1348,8 @@ class _Toolbar extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    _ToolbarChip(
-                      label: 'Filters: Status, Category, Machine, Date',
-                    ),
-                    _ToolbarChip(label: 'New Request'),
+                    _ToolbarChip(label: 'Server list sync enabled'),
+                    _ToolbarChip(label: 'Search on loaded results'),
                   ],
                 ),
               ),
@@ -1004,11 +1361,9 @@ class _Toolbar extends StatelessWidget {
           children: [
             Expanded(child: searchBox),
             const SizedBox(width: 12),
-            const _ToolbarChip(
-              label: 'Filters: Status, Category, Machine, Date',
-            ),
+            const _ToolbarChip(label: 'Server list sync enabled'),
             const SizedBox(width: 8),
-            const _ToolbarChip(label: 'New Request'),
+            const _ToolbarChip(label: 'Search on loaded results'),
           ],
         );
       },
@@ -1044,11 +1399,40 @@ class _ToolbarChip extends StatelessWidget {
   }
 }
 
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3F0),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFF2D0C7)),
+      ),
+      child: Text(
+        message,
+        style: const TextStyle(
+          color: Color(0xFF8C3C2E),
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+}
+
 class RequestListPanel extends StatelessWidget {
   const RequestListPanel({
     super.key,
     required this.requests,
     required this.selectedRequest,
+    required this.isLoadingRequests,
+    required this.isUpdatingStatus,
     required this.onRequestSelected,
     required this.onStatusChanged,
     this.expandList = true,
@@ -1056,6 +1440,8 @@ class RequestListPanel extends StatelessWidget {
 
   final List<PartRequest> requests;
   final PartRequest? selectedRequest;
+  final bool isLoadingRequests;
+  final bool isUpdatingStatus;
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
@@ -1064,28 +1450,49 @@ class RequestListPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final listContent = requests.isEmpty
-        ? const Center(
+        ? Center(
             child: Text(
-              'No requests matched your search.',
-              style: TextStyle(color: Color(0xFF8A90A0), fontSize: 14),
+              isLoadingRequests
+                  ? 'Loading requests from /api/mobile/part-request...'
+                  : 'No requests matched your search.',
+              style: const TextStyle(color: Color(0xFF8A90A0), fontSize: 14),
             ),
           )
-        : ListView.separated(
-            shrinkWrap: !expandList,
-            physics: expandList
-                ? const AlwaysScrollableScrollPhysics()
-                : const NeverScrollableScrollPhysics(),
-            itemCount: requests.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 12),
-            itemBuilder: (context, index) {
-              final request = requests[index];
-              return RequestRowCard(
-                request: request,
-                selected: selectedRequest?.id == request.id,
-                onTap: () => onRequestSelected(request),
-                onStatusChanged: (status) => onStatusChanged(request, status),
-              );
-            },
+        : Stack(
+            children: [
+              ListView.separated(
+                shrinkWrap: !expandList,
+                physics: expandList
+                    ? const AlwaysScrollableScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                itemCount: requests.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final request = requests[index];
+                  return RequestRowCard(
+                    request: request,
+                    selected: selectedRequest?.id == request.id,
+                    isBusy: isUpdatingStatus,
+                    onTap: () => onRequestSelected(request),
+                    onStatusChanged: (status) =>
+                        onStatusChanged(request, status),
+                  );
+                },
+              ),
+              if (isLoadingRequests && requests.isNotEmpty)
+                const Positioned(
+                  top: 0,
+                  right: 0,
+                  child: Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+            ],
           );
 
     return Container(
@@ -1121,12 +1528,14 @@ class RequestRowCard extends StatelessWidget {
     super.key,
     required this.request,
     required this.selected,
+    required this.isBusy,
     required this.onTap,
     required this.onStatusChanged,
   });
 
   final PartRequest request;
   final bool selected;
+  final bool isBusy;
   final VoidCallback onTap;
   final ValueChanged<ApprovalStatus> onStatusChanged;
 
@@ -1174,6 +1583,7 @@ class RequestRowCard extends StatelessWidget {
               label: status.label,
               active: request.status == status,
               style: status.style,
+              enabled: !isBusy,
               onTap: () => onStatusChanged(status),
             );
           }).toList(),
@@ -1226,26 +1636,28 @@ class StatusChip extends StatelessWidget {
     required this.label,
     required this.active,
     required this.style,
+    required this.enabled,
     required this.onTap,
   });
 
   final String label;
   final bool active;
   final StatusChipStyle style;
+  final bool enabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
+      onTap: enabled ? onTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: active
               ? style.background
-              : style.background.withValues(alpha: 0.6),
+              : style.background.withValues(alpha: enabled ? 0.6 : 0.35),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(color: style.border),
         ),
@@ -1266,10 +1678,12 @@ class ApprovalDetailPanel extends StatelessWidget {
   const ApprovalDetailPanel({
     super.key,
     required this.request,
+    required this.lastUpdatedAt,
     this.scrollable = true,
   });
 
   final PartRequest? request;
+  final DateTime? lastUpdatedAt;
   final bool scrollable;
 
   @override
@@ -1296,16 +1710,30 @@ class ApprovalDetailPanel extends StatelessWidget {
               DetailCard(
                 title: 'Selected: ${request!.idLabel}',
                 body:
-                    '${request!.partName} is waiting for approver action. The quick chips on the left can update status to New, Pending, Done, or Returned instantly.',
+                    '${request!.partName} is waiting for approver action. The status chips on the left send PUT /api/mobile/part-request/${request!.id} with the mapped status value immediately.',
               ),
               const SizedBox(height: 12),
               DetailCard(
                 title: 'Request Info',
                 body:
-                    'Brand: ${request!.brand}\nModel: ${request!.model}\nMachine: ${request!.machine}\nPart Category: ${request!.category}\nCost: RM ${request!.cost.toStringAsFixed(0)}\nRequested By: ${request!.requestedBy}\nCreated At: ${request!.createdAt}',
+                    'Brand: ${request!.brand}\nModel: ${request!.model}\nMachine: ${request!.machine}\nPart Category: ${request!.category}\nCost: RM ${request!.cost.toStringAsFixed(2)}\nRequested By: ${request!.requestedBy}\nCreated At: ${request!.createdAt}',
+              ),
+              if (request!.description.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                DetailCard(title: 'Description', body: request!.description),
+              ],
+              const SizedBox(height: 12),
+              DetailCard(
+                title: 'Remark',
+                body: request!.remark.isEmpty ? '-' : request!.remark,
               ),
               const SizedBox(height: 12),
-              DetailCard(title: 'Remark', body: request!.remark),
+              DetailCard(
+                title: 'Live Sync',
+                body: lastUpdatedAt == null
+                    ? 'The app will poll GET /api/mobile/part-request after login.'
+                    : 'Last successful sync: ${_formatDateTime(lastUpdatedAt!)}. New requests created from the other platform are picked up by the automatic list poll.',
+              ),
               const SizedBox(height: 12),
               Container(
                 width: double.infinity,
@@ -1315,19 +1743,13 @@ class ApprovalDetailPanel extends StatelessWidget {
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: const Text(
-                  'API contract:\nGET /api/mobile/part-request\nPUT /api/mobile/part-request/{id}\nPOST /api/mobile/search/part-requests\nPOST /api/mobile/part-request',
+                  'Implemented API contract:\nPOST /api/mobile/login\nGET /api/mobile/part-request\nGET /api/mobile/part-request/{id}\nPUT /api/mobile/part-request/{id}\nPOST /api/mobile/search/part-requests\nPOST /api/mobile/part-request',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 13,
                     height: 1.55,
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              const DetailCard(
-                title: 'Desktop Flutter Direction',
-                body:
-                    'Login screen, wide request list, fast status actions for each row, and a persistent detail panel for day-to-day approvals.',
               ),
             ],
           );
@@ -1390,11 +1812,20 @@ class DetailCard extends StatelessWidget {
   }
 }
 
-class _InputBlock extends StatelessWidget {
-  const _InputBlock({required this.label, required this.value});
+class _EditableInputBlock extends StatelessWidget {
+  const _EditableInputBlock({
+    required this.label,
+    required this.controller,
+    this.obscureText = false,
+    this.keyboardType,
+    this.onSubmitted,
+  });
 
   final String label;
-  final String value;
+  final TextEditingController controller;
+  final bool obscureText;
+  final TextInputType? keyboardType;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -1406,9 +1837,31 @@ class _InputBlock extends StatelessWidget {
           style: const TextStyle(color: Color(0xFF566072), fontSize: 15),
         ),
         const SizedBox(height: 8),
-        Text(
-          value,
-          style: const TextStyle(color: Color(0xFF566072), fontSize: 15),
+        TextField(
+          controller: controller,
+          keyboardType: keyboardType,
+          obscureText: obscureText,
+          onSubmitted: onSubmitted,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFFF8F9FC),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE3E6EF)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFFE3E6EF)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: Color(0xFF1E2330)),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 14,
+            ),
+          ),
         ),
       ],
     );
@@ -1416,14 +1869,47 @@ class _InputBlock extends StatelessWidget {
 }
 
 enum ApprovalStatus {
-  newRequest('New (1)'),
-  pending('Pending (2)'),
-  done('Done (3)'),
-  returned('Returned (4)');
+  newRequest(1, 'New (1)', 'New'),
+  pending(2, 'Pending (2)', 'Pending'),
+  done(3, 'Done (3)', 'Done'),
+  returned(4, 'Returned (4)', 'Returned');
 
-  const ApprovalStatus(this.label);
+  const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
 
+  final int apiValue;
   final String label;
+  final String shortLabel;
+
+  static ApprovalStatus fromApiValue(dynamic rawStatus) {
+    if (rawStatus is Map<String, dynamic>) {
+      final nestedId = rawStatus['id'] ?? rawStatus['status'];
+      if (nestedId != null) {
+        return fromApiValue(nestedId);
+      }
+
+      final nestedName = rawStatus['name']?.toString().toLowerCase();
+      if (nestedName != null) {
+        return values.firstWhere(
+          (status) => status.shortLabel.toLowerCase() == nestedName,
+          orElse: () => ApprovalStatus.newRequest,
+        );
+      }
+    }
+
+    final intValue = int.tryParse('$rawStatus');
+    if (intValue != null) {
+      return values.firstWhere(
+        (status) => status.apiValue == intValue,
+        orElse: () => ApprovalStatus.newRequest,
+      );
+    }
+
+    final stringValue = '$rawStatus'.toLowerCase();
+    return values.firstWhere(
+      (status) => status.shortLabel.toLowerCase() == stringValue,
+      orElse: () => ApprovalStatus.newRequest,
+    );
+  }
 
   StatusChipStyle get style {
     switch (this) {
@@ -1478,6 +1964,7 @@ class PartRequest {
     required this.requestedBy,
     required this.cost,
     required this.createdAt,
+    required this.description,
     required this.remark,
     required this.status,
   });
@@ -1491,53 +1978,135 @@ class PartRequest {
   final String requestedBy;
   final double cost;
   final String createdAt;
+  final String description;
   final String remark;
   ApprovalStatus status;
 
   String get idLabel => 'PR-$id';
+
+  DateTime get createdDate => DateTime.tryParse(createdAt) ?? DateTime(1970);
+
+  factory PartRequest.fromJson(Map<String, dynamic> json) {
+    final id = _readInt(json['id']);
+    if (id == null) {
+      throw const FormatException('Missing part request id.');
+    }
+
+    final createdValue = _readString(json['created_at']) ?? '';
+    final createdAt = createdValue.contains(' ')
+        ? createdValue.split(' ').first
+        : createdValue;
+
+    return PartRequest(
+      id: id,
+      partName:
+          _readString(json['part_name']) ??
+          _readString(json['part_name_label']) ??
+          _readString(json['name']) ??
+          _readNestedString(json['part_category'], 'name') ??
+          'Unnamed part request',
+      brand:
+          _readNestedString(json['brand'], 'name') ??
+          _readString(json['brand_name']) ??
+          '-',
+      model:
+          _readNestedString(json['brand_model'], 'name') ??
+          _readString(json['brand_model_name']) ??
+          '-',
+      machine:
+          _readNestedString(json['machine'], 'name') ??
+          _readString(json['machine_name']) ??
+          '-',
+      category:
+          _readNestedString(json['part_category'], 'name') ??
+          _readString(json['part_category_name']) ??
+          '-',
+      requestedBy:
+          _readNestedString(json['user'], 'name') ??
+          _readNestedString(json['created_by'], 'name') ??
+          _readString(json['user_name']) ??
+          '-',
+      cost: _readDouble(json['cost']) ?? 0,
+      createdAt: createdAt.isEmpty ? '-' : createdAt,
+      description: _readString(json['description']) ?? '',
+      remark: _readString(json['remark']) ?? '',
+      status: ApprovalStatus.fromApiValue(
+        json['status'] ?? json['status_id'] ?? json['approval_status'],
+      ),
+    );
+  }
+
+  PartRequest mergeWithFallback(PartRequest fallback) {
+    return PartRequest(
+      id: id,
+      partName: partName == 'Unnamed part request'
+          ? fallback.partName
+          : partName,
+      brand: brand == '-' ? fallback.brand : brand,
+      model: model == '-' ? fallback.model : model,
+      machine: machine == '-' ? fallback.machine : machine,
+      category: category == '-' ? fallback.category : category,
+      requestedBy: requestedBy == '-' ? fallback.requestedBy : requestedBy,
+      cost: cost == 0 ? fallback.cost : cost,
+      createdAt: createdAt == '-' ? fallback.createdAt : createdAt,
+      description: description.isEmpty ? fallback.description : description,
+      remark: remark.isEmpty ? fallback.remark : remark,
+      status: status,
+    );
+  }
 }
 
-final demoRequests = <PartRequest>[
-  PartRequest(
-    id: 5001,
-    partName: 'Cyan Drum Kit',
-    brand: 'Canon',
-    model: 'iR ADV DX C3926',
-    machine: 'HQ Printer A',
-    category: 'Drum Unit',
-    requestedBy: 'Aisyah',
-    cost: 780,
-    createdAt: '2026-04-02',
-    remark:
-        'Need urgent approval before next PM cycle. Drum count is high and print quality shows repeated marks.',
-    status: ApprovalStatus.newRequest,
-  ),
-  PartRequest(
-    id: 5002,
-    partName: 'Upper Fuser Roller',
-    brand: 'Fuji Xerox',
-    model: 'Apeos C7070',
-    machine: 'Branch Copier 02',
-    category: 'Fuser Assembly',
-    requestedBy: 'Farhan',
-    cost: 1260,
-    createdAt: '2026-04-01',
-    remark:
-        'Temperature inconsistency is causing wrinkled output. Vendor quote is already attached in the backend.',
-    status: ApprovalStatus.pending,
-  ),
-  PartRequest(
-    id: 5003,
-    partName: 'Pickup Roller Set',
-    brand: 'Ricoh',
-    model: 'IM C3000',
-    machine: 'Warehouse Unit 4',
-    category: 'Paper Feed',
-    requestedBy: 'Nina',
-    cost: 180,
-    createdAt: '2026-03-29',
-    remark:
-        'Replacement request submitted after repeated tray misfeeds during preventive maintenance.',
-    status: ApprovalStatus.done,
-  ),
-];
+int? _readInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return int.tryParse('$value');
+}
+
+double? _readDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  return double.tryParse('$value');
+}
+
+String? _readString(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return value.trim();
+  if (value is num || value is bool) return '$value';
+  return null;
+}
+
+String? _readNestedString(dynamic value, String key) {
+  if (value is Map<String, dynamic>) {
+    return _readString(value[key]);
+  }
+  if (value is Map) {
+    return _readString(value[key]);
+  }
+  return null;
+}
+
+String _formatTime(DateTime dateTime) {
+  final hour = dateTime.hour > 12
+      ? dateTime.hour - 12
+      : (dateTime.hour == 0 ? 12 : dateTime.hour);
+  final minute = dateTime.minute.toString().padLeft(2, '0');
+  final suffix = dateTime.hour >= 12 ? 'PM' : 'AM';
+  return '$hour:$minute $suffix';
+}
+
+String _formatDateTime(DateTime dateTime) {
+  final year = dateTime.year.toString().padLeft(4, '0');
+  final month = dateTime.month.toString().padLeft(2, '0');
+  final day = dateTime.day.toString().padLeft(2, '0');
+  return '$year-$month-$day ${_formatTime(dateTime)}';
+}
+
+String _friendlyLoginFailure(Object error) {
+  if (kIsWeb) {
+    return 'When this app runs in a browser, the WOD backend may reject POST /api/mobile/login with CSRF protection. Run the app as a desktop build or allow the browser origin on the backend.';
+  }
+
+  return 'Please check the API response and your credentials. ($error)';
+}
