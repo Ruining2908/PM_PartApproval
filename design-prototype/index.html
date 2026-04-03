@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Part Approval Request</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <section class="screen login-screen active" data-screen="login">
+        <div class="ambient ambient-one"></div>
+        <div class="ambient ambient-two"></div>
+        <div class="login-card">
+          <p class="eyebrow">WOD-style mobile workflow</p>
+          <h1>Part Approval Request</h1>
+          <p class="lead">
+            Review part requests, update approval status quickly, and manage new
+            submissions from a single mobile dashboard.
+          </p>
+
+          <form id="login-form" class="login-form">
+            <label>
+              <span>Email</span>
+              <input type="email" id="email" value="tech@example.com" required />
+            </label>
+            <label>
+              <span>Password</span>
+              <input type="password" id="password" value="secret123" required />
+            </label>
+            <button type="submit" class="primary-btn">Sign In</button>
+          </form>
+
+          <div class="login-note">
+            <span class="note-dot"></span>
+            Uses `POST /api/mobile/login`, then fetches the request list.
+          </div>
+        </div>
+      </section>
+
+      <section class="screen app-screen" data-screen="dashboard">
+        <header class="app-header">
+          <div>
+            <p class="eyebrow">Approval workflow</p>
+            <h2>Part Requests</h2>
+          </div>
+          <button class="ghost-btn" id="logout-btn">Logout</button>
+        </header>
+
+        <section class="hero-panel">
+          <div>
+            <p class="hero-label">Daily overview</p>
+            <h3>Keep approvals moving without leaving the list.</h3>
+            <p class="hero-copy">
+              Each part request has four quick status actions beside it: New,
+              Pending, Done, and Returned.
+            </p>
+          </div>
+          <button class="primary-btn" id="open-create-btn">New Request</button>
+        </section>
+
+        <section class="summary-grid" id="summary-grid"></section>
+
+        <section class="toolbar">
+          <div class="search-box">
+            <input
+              type="search"
+              id="search-input"
+              placeholder="Search by part name, machine, brand..."
+            />
+          </div>
+          <button class="ghost-btn" id="toggle-filters-btn">Filters</button>
+        </section>
+
+        <section class="filters-panel hidden" id="filters-panel">
+          <div class="filter-row">
+            <label>
+              <span>Status</span>
+              <select id="filter-status">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label>
+              <span>Category</span>
+              <select id="filter-category">
+                <option value="">All</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-row">
+            <label>
+              <span>Machine</span>
+              <select id="filter-machine">
+                <option value="">All</option>
+              </select>
+            </label>
+            <label>
+              <span>User</span>
+              <select id="filter-user">
+                <option value="">All</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-row">
+            <label>
+              <span>Created from</span>
+              <input type="date" id="filter-from" />
+            </label>
+            <label>
+              <span>Created to</span>
+              <input type="date" id="filter-to" />
+            </label>
+          </div>
+          <button class="primary-btn secondary-tone" id="apply-filters-btn">
+            Apply Search Filters
+          </button>
+        </section>
+
+        <section class="list-section">
+          <div class="section-head">
+            <h3>Request list</h3>
+            <span id="request-count"></span>
+          </div>
+          <div id="request-list" class="request-list"></div>
+        </section>
+      </section>
+    </div>
+
+    <div class="modal hidden" id="detail-modal">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Request detail</p>
+            <h3 id="detail-title">Part Request</h3>
+          </div>
+          <button class="ghost-btn" id="close-detail-btn">Close</button>
+        </div>
+        <div id="detail-body" class="detail-body"></div>
+      </div>
+    </div>
+
+    <div class="modal hidden" id="create-modal">
+      <div class="modal-sheet">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Create request</p>
+            <h3>New Part Approval</h3>
+          </div>
+          <button class="ghost-btn" id="close-create-btn">Close</button>
+        </div>
+
+        <form id="create-form" class="create-form">
+          <div class="form-grid">
+            <label>
+              <span>Brand</span>
+              <select id="brand_id" name="brand_id" required></select>
+            </label>
+            <label>
+              <span>Brand Model</span>
+              <select id="brand_model_id" name="brand_model_id" required></select>
+            </label>
+            <label>
+              <span>Machine</span>
+              <select id="machine_id" name="machine_id"></select>
+            </label>
+            <label>
+              <span>Part Category</span>
+              <select id="part_category_id" name="part_category_id" required></select>
+            </label>
+            <label>
+              <span>Part Name</span>
+              <input type="text" id="part_name" name="part_name" placeholder="Optional part name" />
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="status" name="status" required></select>
+            </label>
+            <label>
+              <span>Cost</span>
+              <input type="number" id="cost" name="cost" placeholder="0.00" min="0" step="0.01" />
+            </label>
+            <label class="full">
+              <span>Description</span>
+              <textarea id="description" name="description" rows="3" placeholder="Describe the requested part"></textarea>
+            </label>
+            <label class="full">
+              <span>Remark</span>
+              <textarea id="remark" name="remark" rows="3" placeholder="Additional approval note"></textarea>
+            </label>
+          </div>
+          <button type="submit" class="primary-btn">Submit Request</button>
+        </form>
+      </div>
+    </div>
+
+    <template id="request-card-template">
+      <article class="request-card">
+        <button class="request-main" type="button">
+          <div class="request-top">
+            <div>
+              <p class="request-id"></p>
+              <h4 class="request-name"></h4>
+            </div>
+            <span class="status-pill"></span>
+          </div>
+          <div class="request-meta"></div>
+          <p class="request-description"></p>
+        </button>
+        <div class="floating-status-group"></div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
