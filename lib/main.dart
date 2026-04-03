@@ -42,6 +42,21 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
   final List<PartRequest> _requests = demoRequests;
   PartRequest? _selectedRequest = demoRequests.first;
 
+  void _handleRefresh() {
+    setState(() {
+      if (_filteredRequests.isNotEmpty) {
+        _selectedRequest = _filteredRequests.first;
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Request list refreshed'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
   List<PartRequest> get _filteredRequests {
     if (_query.isEmpty) return _requests;
 
@@ -95,6 +110,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
                     _selectedRequest = request;
                   });
                 },
+                onRefresh: _handleRefresh,
               )
             : LoginView(
                 onLogin: () {
@@ -278,6 +294,7 @@ class DashboardView extends StatelessWidget {
     required this.onSearchChanged,
     required this.onRequestSelected,
     required this.onStatusChanged,
+    required this.onRefresh,
   });
 
   final List<PartRequest> requests;
@@ -290,6 +307,7 @@ class DashboardView extends StatelessWidget {
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -319,6 +337,7 @@ class DashboardView extends StatelessWidget {
           onSearchChanged: onSearchChanged,
           onRequestSelected: onRequestSelected,
           onStatusChanged: onStatusChanged,
+          onRefresh: onRefresh,
           usePageScrollLayout: usePageScrollLayout,
         );
 
@@ -352,6 +371,7 @@ class _DashboardContent extends StatelessWidget {
     required this.onSearchChanged,
     required this.onRequestSelected,
     required this.onStatusChanged,
+    required this.onRefresh,
     required this.usePageScrollLayout,
   });
 
@@ -368,6 +388,7 @@ class _DashboardContent extends StatelessWidget {
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
+  final VoidCallback onRefresh;
   final bool usePageScrollLayout;
 
   @override
@@ -449,6 +470,7 @@ class _DashboardContent extends StatelessWidget {
                     ],
                     _DashboardHeader(
                       onLogout: onLogout,
+                      onRefresh: onRefresh,
                       compact: compactHeader,
                     ),
                     const SizedBox(height: 18),
@@ -786,9 +808,14 @@ class _SidebarItem extends StatelessWidget {
 }
 
 class _DashboardHeader extends StatelessWidget {
-  const _DashboardHeader({required this.onLogout, required this.compact});
+  const _DashboardHeader({
+    required this.onLogout,
+    required this.onRefresh,
+    required this.compact,
+  });
 
   final VoidCallback onLogout;
+  final VoidCallback onRefresh;
   final bool compact;
 
   @override
@@ -829,16 +856,43 @@ class _DashboardHeader extends StatelessWidget {
       ),
     );
 
+    final refreshButton = OutlinedButton.icon(
+      onPressed: onRefresh,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF3C4352),
+        side: const BorderSide(color: Color(0xFFE3E6EF)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+      icon: const Icon(Icons.refresh, size: 18),
+      label: const Text(
+        'Refresh',
+        style: TextStyle(fontWeight: FontWeight.w700),
+      ),
+    );
+
     if (compact) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [titleBlock, const SizedBox(height: 12), userBadge],
+        children: [
+          titleBlock,
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: userBadge),
+              const SizedBox(width: 12),
+              refreshButton,
+            ],
+          ),
+        ],
       );
     }
 
     return Row(
       children: [
         Expanded(child: titleBlock),
+        refreshButton,
+        const SizedBox(width: 12),
         userBadge,
       ],
     );
