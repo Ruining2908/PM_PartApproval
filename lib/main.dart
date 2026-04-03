@@ -1374,6 +1374,7 @@ class RequestListPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final groupedRequests = _groupRequestsByDate(requests);
     final listContent = requests.isEmpty
         ? Center(
             child: Text(
@@ -1385,24 +1386,37 @@ class RequestListPanel extends StatelessWidget {
           )
         : Stack(
             children: [
-              ListView.separated(
+              CustomScrollView(
                 shrinkWrap: !expandList,
                 physics: expandList
                     ? const AlwaysScrollableScrollPhysics()
                     : const NeverScrollableScrollPhysics(),
-                itemCount: requests.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, index) {
-                  final request = requests[index];
-                  return RequestRowCard(
-                    request: request,
-                    selected: selectedRequest?.id == request.id,
-                    isBusy: isUpdatingStatus,
-                    onTap: () => onRequestSelected(request),
-                    onStatusChanged: (status) =>
-                        onStatusChanged(request, status),
-                  );
-                },
+                slivers: [
+                  for (final group in groupedRequests) ...[
+                    SliverPersistentHeader(
+                      pinned: expandList,
+                      delegate: _StickyDateHeaderDelegate(
+                        label: _formatRequestSectionDate(group.date),
+                      ),
+                    ),
+                    SliverList.separated(
+                      itemCount: group.requests.length,
+                      separatorBuilder: (_, _) => const SizedBox(height: 12),
+                      itemBuilder: (context, index) {
+                        final request = group.requests[index];
+                        return RequestRowCard(
+                          request: request,
+                          selected: selectedRequest?.id == request.id,
+                          isBusy: isUpdatingStatus,
+                          onTap: () => onRequestSelected(request),
+                          onStatusChanged: (status) =>
+                              onStatusChanged(request, status),
+                        );
+                      },
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                  ],
+                ],
               ),
               if (isLoadingRequests && requests.isNotEmpty)
                 const Positioned(
@@ -1445,6 +1459,70 @@ class RequestListPanel extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _StickyDateHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _StickyDateHeaderDelegate({required this.label});
+
+  final String label;
+
+  @override
+  double get minExtent => 40;
+
+  @override
+  double get maxExtent => 40;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Container(
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: overlapsContent
+            ? [
+                BoxShadow(
+                  color: const Color(0xFF111827).withValues(alpha: 0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ]
+            : null,
+      ),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: overlapsContent
+              ? const Color(0xFFEFF4FF)
+              : const Color(0xFFF5F8FF),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: overlapsContent
+                ? const Color(0xFFC8D6F2)
+                : const Color(0xFFD7E1F2),
+          ),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF24324A),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(covariant _StickyDateHeaderDelegate oldDelegate) {
+    return oldDelegate.label != label;
   }
 }
 
@@ -2031,6 +2109,13 @@ class PartRequest {
   }
 }
 
+class _RequestDateGroup {
+  const _RequestDateGroup({required this.date, required this.requests});
+
+  final DateTime date;
+  final List<PartRequest> requests;
+}
+
 int? _readInt(dynamic value) {
   if (value == null) return null;
   if (value is int) return value;
@@ -2081,11 +2166,62 @@ String _formatTime(DateTime dateTime) {
   return '$hour:$minute $suffix';
 }
 
-String _formatDateTime(DateTime dateTime) {
-  final year = dateTime.year.toString().padLeft(4, '0');
-  final month = dateTime.month.toString().padLeft(2, '0');
+List<_RequestDateGroup> _groupRequestsByDate(List<PartRequest> requests) {
+  final grouped = <_RequestDateGroup>[];
+
+  for (final request in requests) {
+    final date = request.createdDate;
+    final normalizedDate = DateTime(date.year, date.month, date.day);
+
+    if (grouped.isNotEmpty &&
+        _isSameDay(grouped.last.date, normalizedDate)) {
+      grouped.last.requests.add(request);
+      continue;
+    }
+
+    grouped.add(
+      _RequestDateGroup(date: normalizedDate, requests: [request]),
+    );
+  }
+
+  return grouped;
+}
+
+bool _isSameDay(DateTime left, DateTime right) {
+  return left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+}
+
+String _formatRequestSectionDate(DateTime dateTime) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  const weekdays = [
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sun',
+  ];
+
+  final weekday = weekdays[dateTime.weekday - 1];
+  final month = months[dateTime.month - 1];
   final day = dateTime.day.toString().padLeft(2, '0');
-  return '$year-$month-$day ${_formatTime(dateTime)}';
+  return '$weekday, $day $month ${dateTime.year}';
 }
 
 String _friendlyLoginFailure(Object error) {
