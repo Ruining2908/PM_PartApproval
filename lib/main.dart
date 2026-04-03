@@ -258,6 +258,37 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
     );
   }
 
+  Future<void> _showRequestDetailDialog(PartRequest request) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final size = MediaQuery.sizeOf(dialogContext);
+        final dialogWidth = size.width < 720 ? size.width - 32 : 640.0;
+        final dialogHeight = size.height < 820 ? size.height * 0.8 : 720.0;
+
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          backgroundColor: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: dialogWidth,
+              maxHeight: dialogHeight,
+            ),
+            child: ApprovalDetailPanel(
+              request: request,
+              lastUpdatedAt: _lastUpdatedAt,
+              onClose: () => Navigator.of(dialogContext).pop(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   List<PartRequest> get _filteredRequests {
     final base = switch (_activeMenu) {
       'Pending' =>
@@ -326,6 +357,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
                 },
                 onRequestSelected: (request) {
                   setState(() => _selectedRequest = request);
+                  _showRequestDetailDialog(request);
                 },
                 onStatusChanged: _handleStatusChanged,
                 onRefresh: () => _loadRequests(),
@@ -735,8 +767,6 @@ class _DashboardContent extends StatelessWidget {
               child: LayoutBuilder(
                 builder: (context, contentConstraints) {
                   final compactHeader = contentConstraints.maxWidth < 760;
-                  final stackedPanels = contentConstraints.maxWidth < 960;
-
                   final metrics = compactHeader
                       ? Column(
                           children: [
@@ -771,9 +801,15 @@ class _DashboardContent extends StatelessWidget {
                           ],
                         );
 
-                  final panels = stackedPanels
-                      ? _buildStackedPanels()
-                      : _buildSplitPanels();
+                  final panels = RequestListPanel(
+                    requests: requests,
+                    selectedRequest: selectedRequest,
+                    isLoadingRequests: isLoadingRequests,
+                    isUpdatingStatus: isUpdatingStatus,
+                    onRequestSelected: onRequestSelected,
+                    onStatusChanged: onStatusChanged,
+                    expandList: !usePageScrollLayout,
+                  );
 
                   final bodyChildren = [
                     if (compactShell) ...[
@@ -816,110 +852,6 @@ class _DashboardContent extends StatelessWidget {
                 },
               ),
             ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStackedPanels() {
-    if (usePageScrollLayout) {
-      return Column(
-        children: [
-          RequestListPanel(
-            requests: requests,
-            selectedRequest: selectedRequest,
-            isLoadingRequests: isLoadingRequests,
-            isUpdatingStatus: isUpdatingStatus,
-            onRequestSelected: onRequestSelected,
-            onStatusChanged: onStatusChanged,
-            expandList: false,
-          ),
-          const SizedBox(height: 18),
-          ApprovalDetailPanel(
-            request: selectedRequest,
-            scrollable: false,
-            lastUpdatedAt: lastUpdatedAt,
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          flex: 3,
-          child: RequestListPanel(
-            requests: requests,
-            selectedRequest: selectedRequest,
-            isLoadingRequests: isLoadingRequests,
-            isUpdatingStatus: isUpdatingStatus,
-            onRequestSelected: onRequestSelected,
-            onStatusChanged: onStatusChanged,
-          ),
-        ),
-        const SizedBox(height: 18),
-        Expanded(
-          flex: 2,
-          child: ApprovalDetailPanel(
-            request: selectedRequest,
-            lastUpdatedAt: lastUpdatedAt,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSplitPanels() {
-    if (usePageScrollLayout) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 5,
-            child: RequestListPanel(
-              requests: requests,
-              selectedRequest: selectedRequest,
-              isLoadingRequests: isLoadingRequests,
-              isUpdatingStatus: isUpdatingStatus,
-              onRequestSelected: onRequestSelected,
-              onStatusChanged: onStatusChanged,
-              expandList: false,
-            ),
-          ),
-          const SizedBox(width: 18),
-          SizedBox(
-            width: 300,
-            child: ApprovalDetailPanel(
-              request: selectedRequest,
-              scrollable: false,
-              lastUpdatedAt: lastUpdatedAt,
-            ),
-          ),
-        ],
-      );
-    }
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(
-          flex: 5,
-          child: RequestListPanel(
-            requests: requests,
-            selectedRequest: selectedRequest,
-            isLoadingRequests: isLoadingRequests,
-            isUpdatingStatus: isUpdatingStatus,
-            onRequestSelected: onRequestSelected,
-            onStatusChanged: onStatusChanged,
-          ),
-        ),
-        const SizedBox(width: 18),
-        SizedBox(
-          width: 300,
-          child: ApprovalDetailPanel(
-            request: selectedRequest,
-            lastUpdatedAt: lastUpdatedAt,
           ),
         ),
       ],
@@ -1680,11 +1612,13 @@ class ApprovalDetailPanel extends StatelessWidget {
     required this.request,
     required this.lastUpdatedAt,
     this.scrollable = true,
+    this.onClose,
   });
 
   final PartRequest? request;
   final DateTime? lastUpdatedAt;
   final bool scrollable;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -1698,13 +1632,25 @@ class ApprovalDetailPanel extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Approval Detail',
-                style: TextStyle(
-                  color: Color(0xFF16181D),
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                ),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Approval Detail',
+                      style: TextStyle(
+                        color: Color(0xFF16181D),
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  if (onClose != null)
+                    IconButton(
+                      onPressed: onClose,
+                      icon: const Icon(Icons.close_rounded),
+                      tooltip: 'Close',
+                    ),
+                ],
               ),
               const SizedBox(height: 14),
               DetailCard(
@@ -1726,30 +1672,6 @@ class ApprovalDetailPanel extends StatelessWidget {
               DetailCard(
                 title: 'Remark',
                 body: request!.remark.isEmpty ? '-' : request!.remark,
-              ),
-              const SizedBox(height: 12),
-              DetailCard(
-                title: 'Live Sync',
-                body: lastUpdatedAt == null
-                    ? 'The app will poll GET /api/mobile/part-request after login.'
-                    : 'Last successful sync: ${_formatDateTime(lastUpdatedAt!)}. New requests created from the other platform are picked up by the automatic list poll.',
-              ),
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1F2430),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Text(
-                  'Implemented API contract:\nPOST /api/mobile/login\nGET /api/mobile/part-request\nGET /api/mobile/part-request/{id}\nPUT /api/mobile/part-request/{id}\nPOST /api/mobile/search/part-requests\nPOST /api/mobile/part-request',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    height: 1.55,
-                  ),
-                ),
               ),
             ],
           );
