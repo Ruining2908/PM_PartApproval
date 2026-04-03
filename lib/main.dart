@@ -171,6 +171,50 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
   ) async {
     if (_isUpdatingStatus || request.status == status) return;
 
+    final approved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Confirm status change'),
+          content: Text(
+            'Approver confirmation is required.\n\nChange ${request.idLabel} from ${request.status.label} to ${status.label}?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Confirm'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (approved != true || !mounted) return;
+
+    PartRequest requestForUpdate = request;
+
+    if (!request.hasRequiredUpdateIds) {
+      try {
+        final detail = await _api.showPartRequest(request.id);
+        requestForUpdate = PartRequest.fromJson(
+          detail,
+        ).mergeWithFallback(request);
+      } on ApiException catch (error) {
+        if (!mounted) return;
+        _showSnackBar(error.message);
+        return;
+      } catch (_) {
+        if (!mounted) return;
+        _showSnackBar('Unable to load the latest request details.');
+        return;
+      }
+    }
+
     final originalStatus = request.status;
     setState(() {
       _isUpdatingStatus = true;
@@ -179,10 +223,10 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
     });
 
     try {
-      final response = await _api.updatePartRequest(request.id, {
-        'status': status.apiValue,
-        'status_id': status.apiValue,
-      });
+      final response = await _api.updatePartRequest(
+        requestForUpdate.id,
+        requestForUpdate.toUpdatePayload(status),
+      );
 
       final updated = PartRequest.fromJson(response).mergeWithFallback(request);
 
@@ -1274,11 +1318,7 @@ class _Toolbar extends StatelessWidget {
           return searchBox;
         }
 
-        return Row(
-          children: [
-            Expanded(child: searchBox),
-          ],
-        );
+        return Row(children: [Expanded(child: searchBox)]);
       },
     );
   }
@@ -1460,28 +1500,18 @@ class RequestRowCard extends StatelessWidget {
           ],
         );
 
-        final statusSummary = Column(
-          crossAxisAlignment: compact
-              ? CrossAxisAlignment.start
-              : CrossAxisAlignment.end,
-          children: [
-            const Text(
-              'Status',
-              style: TextStyle(
-                color: Color(0xFF8A90A0),
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 6),
-            StatusChip(
-              label: request.status.label,
-              active: true,
-              style: request.status.style,
-              enabled: false,
-              onTap: () => onStatusChanged(request.status),
-            ),
-          ],
+        final statusWrap = Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: ApprovalStatus.values.map((status) {
+            return StatusChip(
+              label: status.label,
+              active: request.status == status,
+              style: status.style,
+              enabled: !isBusy,
+              onTap: () => onStatusChanged(status),
+            );
+          }).toList(),
         );
 
         return Material(
@@ -1506,7 +1536,7 @@ class RequestRowCard extends StatelessWidget {
                       children: [
                         requestInfo,
                         const SizedBox(height: 12),
-                        statusSummary,
+                        statusWrap,
                       ],
                     )
                   : Row(
@@ -1514,7 +1544,7 @@ class RequestRowCard extends StatelessWidget {
                       children: [
                         Expanded(child: requestInfo),
                         const SizedBox(width: 16),
-                        statusSummary,
+                        Flexible(child: statusWrap),
                       ],
                     ),
             ),
@@ -1543,13 +1573,6 @@ class StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const activeBackground = Color(0xFFEEF9F1);
-    const activeBorder = Color(0xFF2E7A46);
-    const activeForeground = Color(0xFF2E7A46);
-    const inactiveBackground = Color(0xFFFFF0F0);
-    const inactiveBorder = Color(0xFFD95C5C);
-    const inactiveForeground = Color(0xFFD95C5C);
-
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: enabled ? onTap : null,
@@ -1558,15 +1581,15 @@ class StatusChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: active
-              ? activeBackground
-              : inactiveBackground.withValues(alpha: enabled ? 0.92 : 0.55),
+              ? style.background
+              : style.background.withValues(alpha: enabled ? 0.6 : 0.35),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: active ? activeBorder : inactiveBorder),
+          border: Border.all(color: style.border),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: active ? activeForeground : inactiveForeground,
+            color: style.foreground,
             fontSize: 11,
             fontWeight: FontWeight.w700,
           ),
@@ -1626,7 +1649,7 @@ class ApprovalDetailPanel extends StatelessWidget {
               DetailCard(
                 title: 'Selected: ${request!.idLabel}',
                 body:
-                    '${request!.partName} was submitted with status ${request!.status.label}. The list now shows only the selected status for each request.',
+                    '${request!.partName} is waiting for approver action. Any status change must be reconfirmed by the approver before the app sends the update to /api/mobile/part-request/${request!.id}.',
               ),
               const SizedBox(height: 12),
               DetailCard(
@@ -1761,10 +1784,10 @@ class _EditableInputBlock extends StatelessWidget {
 }
 
 enum ApprovalStatus {
-  newRequest(1, 'New', 'New'),
-  pending(2, 'Pending', 'Pending'),
-  done(3, 'Done', 'Done'),
-  returned(4, 'Returned', 'Returned');
+  newRequest(1, 'New (1)', 'New'),
+  pending(2, 'Pending (2)', 'Pending'),
+  done(3, 'Done (3)', 'Done'),
+  returned(4, 'Returned (4)', 'Returned');
 
   const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
 
@@ -1774,21 +1797,17 @@ enum ApprovalStatus {
 
   static ApprovalStatus fromApiValue(dynamic rawStatus) {
     if (rawStatus is Map<String, dynamic>) {
-      final nestedId =
-          rawStatus['id'] ??
-          rawStatus['status'] ??
-          rawStatus['status_id'] ??
-          rawStatus['value'];
+      final nestedId = rawStatus['id'] ?? rawStatus['status'];
       if (nestedId != null) {
         return fromApiValue(nestedId);
       }
 
-      final nestedName =
-          rawStatus['name']?.toString().toLowerCase() ??
-          rawStatus['label']?.toString().toLowerCase() ??
-          rawStatus['title']?.toString().toLowerCase();
+      final nestedName = rawStatus['name']?.toString().toLowerCase();
       if (nestedName != null) {
-        return _fromStatusName(nestedName);
+        return values.firstWhere(
+          (status) => status.shortLabel.toLowerCase() == nestedName,
+          orElse: () => ApprovalStatus.newRequest,
+        );
       }
     }
 
@@ -1801,16 +1820,8 @@ enum ApprovalStatus {
     }
 
     final stringValue = '$rawStatus'.toLowerCase();
-    return _fromStatusName(stringValue);
-  }
-
-  static ApprovalStatus _fromStatusName(String rawValue) {
-    final normalized = rawValue.trim().toLowerCase();
     return values.firstWhere(
-      (status) =>
-          status.shortLabel.toLowerCase() == normalized ||
-          status.label.toLowerCase() == normalized ||
-          normalized.contains(status.shortLabel.toLowerCase()),
+      (status) => status.shortLabel.toLowerCase() == stringValue,
       orElse: () => ApprovalStatus.newRequest,
     );
   }
@@ -1861,9 +1872,13 @@ class PartRequest {
   PartRequest({
     required this.id,
     required this.partName,
+    required this.brandId,
     required this.brand,
+    required this.modelId,
     required this.model,
+    required this.machineId,
     required this.machine,
+    required this.categoryId,
     required this.category,
     required this.requestedBy,
     required this.cost,
@@ -1875,9 +1890,13 @@ class PartRequest {
 
   final int id;
   final String partName;
+  final int? brandId;
   final String brand;
+  final int? modelId;
   final String model;
+  final int? machineId;
   final String machine;
+  final int? categoryId;
   final String category;
   final String requestedBy;
   final double cost;
@@ -1889,6 +1908,29 @@ class PartRequest {
   String get idLabel => 'PR-$id';
 
   DateTime get createdDate => DateTime.tryParse(createdAt) ?? DateTime(1970);
+
+  bool get hasRequiredUpdateIds =>
+      brandId != null &&
+      modelId != null &&
+      machineId != null &&
+      categoryId != null;
+
+  Map<String, dynamic> toUpdatePayload(ApprovalStatus nextStatus) {
+    final payload = <String, dynamic>{
+      'part_name': partName,
+      'description': description,
+      'remark': remark,
+      'status': nextStatus.apiValue,
+      'status_id': nextStatus.apiValue,
+    };
+
+    if (brandId != null) payload['brand_id'] = brandId;
+    if (modelId != null) payload['brand_model_id'] = modelId;
+    if (machineId != null) payload['machine_id'] = machineId;
+    if (categoryId != null) payload['part_category_id'] = categoryId;
+
+    return payload;
+  }
 
   factory PartRequest.fromJson(Map<String, dynamic> json) {
     final id = _readInt(json['id']);
@@ -1909,18 +1951,28 @@ class PartRequest {
           _readString(json['name']) ??
           _readNestedString(json['part_category'], 'name') ??
           'Unnamed part request',
+      brandId:
+          _readInt(json['brand_id']) ?? _readNestedInt(json['brand'], 'id'),
       brand:
           _readNestedString(json['brand'], 'name') ??
           _readString(json['brand_name']) ??
           '-',
+      modelId:
+          _readInt(json['brand_model_id']) ??
+          _readNestedInt(json['brand_model'], 'id'),
       model:
           _readNestedString(json['brand_model'], 'name') ??
           _readString(json['brand_model_name']) ??
           '-',
+      machineId:
+          _readInt(json['machine_id']) ?? _readNestedInt(json['machine'], 'id'),
       machine:
           _readNestedString(json['machine'], 'name') ??
           _readString(json['machine_name']) ??
           '-',
+      categoryId:
+          _readInt(json['part_category_id']) ??
+          _readNestedInt(json['part_category'], 'id'),
       category:
           _readNestedString(json['part_category'], 'name') ??
           _readString(json['part_category_name']) ??
@@ -1946,9 +1998,13 @@ class PartRequest {
       partName: partName == 'Unnamed part request'
           ? fallback.partName
           : partName,
+      brandId: brandId ?? fallback.brandId,
       brand: brand == '-' ? fallback.brand : brand,
+      modelId: modelId ?? fallback.modelId,
       model: model == '-' ? fallback.model : model,
+      machineId: machineId ?? fallback.machineId,
       machine: machine == '-' ? fallback.machine : machine,
+      categoryId: categoryId ?? fallback.categoryId,
       category: category == '-' ? fallback.category : category,
       requestedBy: requestedBy == '-' ? fallback.requestedBy : requestedBy,
       cost: cost == 0 ? fallback.cost : cost,
@@ -1987,6 +2043,16 @@ String? _readNestedString(dynamic value, String key) {
   }
   if (value is Map) {
     return _readString(value[key]);
+  }
+  return null;
+}
+
+int? _readNestedInt(dynamic value, String key) {
+  if (value is Map<String, dynamic>) {
+    return _readInt(value[key]);
+  }
+  if (value is Map) {
+    return _readInt(value[key]);
   }
   return null;
 }
