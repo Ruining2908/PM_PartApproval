@@ -181,6 +181,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
     try {
       final response = await _api.updatePartRequest(request.id, {
         'status': status.apiValue,
+        'status_id': status.apiValue,
       });
 
       final updated = PartRequest.fromJson(response).mergeWithFallback(request);
@@ -1580,6 +1581,13 @@ class StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    const activeBackground = Color(0xFFEEF9F1);
+    const activeBorder = Color(0xFF2E7A46);
+    const activeForeground = Color(0xFF2E7A46);
+    const inactiveBackground = Color(0xFFFFF0F0);
+    const inactiveBorder = Color(0xFFD95C5C);
+    const inactiveForeground = Color(0xFFD95C5C);
+
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: enabled ? onTap : null,
@@ -1588,15 +1596,15 @@ class StatusChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: active
-              ? style.background
-              : style.background.withValues(alpha: enabled ? 0.6 : 0.35),
+              ? activeBackground
+              : inactiveBackground.withValues(alpha: enabled ? 0.92 : 0.55),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: style.border),
+          border: Border.all(color: active ? activeBorder : inactiveBorder),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: style.foreground,
+            color: active ? activeForeground : inactiveForeground,
             fontSize: 11,
             fontWeight: FontWeight.w700,
           ),
@@ -1791,10 +1799,10 @@ class _EditableInputBlock extends StatelessWidget {
 }
 
 enum ApprovalStatus {
-  newRequest(1, 'New (1)', 'New'),
-  pending(2, 'Pending (2)', 'Pending'),
-  done(3, 'Done (3)', 'Done'),
-  returned(4, 'Returned (4)', 'Returned');
+  newRequest(1, 'New', 'New'),
+  pending(2, 'Pending', 'Pending'),
+  done(3, 'Done', 'Done'),
+  returned(4, 'Returned', 'Returned');
 
   const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
 
@@ -1804,17 +1812,21 @@ enum ApprovalStatus {
 
   static ApprovalStatus fromApiValue(dynamic rawStatus) {
     if (rawStatus is Map<String, dynamic>) {
-      final nestedId = rawStatus['id'] ?? rawStatus['status'];
+      final nestedId =
+          rawStatus['id'] ??
+          rawStatus['status'] ??
+          rawStatus['status_id'] ??
+          rawStatus['value'];
       if (nestedId != null) {
         return fromApiValue(nestedId);
       }
 
-      final nestedName = rawStatus['name']?.toString().toLowerCase();
+      final nestedName =
+          rawStatus['name']?.toString().toLowerCase() ??
+          rawStatus['label']?.toString().toLowerCase() ??
+          rawStatus['title']?.toString().toLowerCase();
       if (nestedName != null) {
-        return values.firstWhere(
-          (status) => status.shortLabel.toLowerCase() == nestedName,
-          orElse: () => ApprovalStatus.newRequest,
-        );
+        return _fromStatusName(nestedName);
       }
     }
 
@@ -1827,8 +1839,16 @@ enum ApprovalStatus {
     }
 
     final stringValue = '$rawStatus'.toLowerCase();
+    return _fromStatusName(stringValue);
+  }
+
+  static ApprovalStatus _fromStatusName(String rawValue) {
+    final normalized = rawValue.trim().toLowerCase();
     return values.firstWhere(
-      (status) => status.shortLabel.toLowerCase() == stringValue,
+      (status) =>
+          status.shortLabel.toLowerCase() == normalized ||
+          status.label.toLowerCase() == normalized ||
+          normalized.contains(status.shortLabel.toLowerCase()),
       orElse: () => ApprovalStatus.newRequest,
     );
   }
