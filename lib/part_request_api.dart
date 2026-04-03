@@ -57,6 +57,17 @@ class PartRequestApi {
     return _extractList(body);
   }
 
+  Future<Map<String, dynamic>> getProfile() async {
+    final response = await _client.get(
+      _resolve('/api/mobile/profile'),
+      headers: _headers(),
+    );
+
+    final body = _decodeBody(response);
+    _ensureSuccess(response, body);
+    return _extractItem(body);
+  }
+
   Future<Map<String, dynamic>> showPartRequest(int id) async {
     final response = await _client.get(
       _resolve('/api/mobile/part-request/$id'),

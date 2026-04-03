@@ -60,6 +60,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
   String? _requestError;
   DateTime? _lastUpdatedAt;
   Timer? _refreshTimer;
+  UserProfile? _userProfile;
 
   List<PartRequest> _requests = const [];
   PartRequest? _selectedRequest;
@@ -85,10 +86,23 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
         password: _passwordController.text,
       );
 
+      final loginEmail = _emailController.text.trim();
+      UserProfile profile = UserProfile(name: 'Approver', email: loginEmail);
+
+      try {
+        final profilePayload = await _api.getProfile();
+        profile = UserProfile.fromJson(
+          profilePayload,
+        ).mergeFallbackEmail(loginEmail);
+      } catch (_) {
+        profile = profile.mergeFallbackEmail(loginEmail);
+      }
+
       if (!mounted) return;
 
       setState(() {
         _isLoggedIn = true;
+        _userProfile = profile;
       });
 
       await _loadRequests(showSnackBar: false);
@@ -299,6 +313,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
       _loginError = null;
       _lastUpdatedAt = null;
       _selectedRequester = null;
+      _userProfile = null;
       _requests = const [];
       _selectedRequest = null;
     });
@@ -452,6 +467,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
             ? DashboardView(
                 requests: _filteredRequests,
                 allRequests: _requests,
+                userProfile: _userProfile,
                 selectedRequest: _selectedRequest,
                 activeMenu: _activeMenu,
                 requesterOptions: _requestedByOptions,
@@ -753,6 +769,7 @@ class DashboardView extends StatelessWidget {
     super.key,
     required this.requests,
     required this.allRequests,
+    required this.userProfile,
     required this.selectedRequest,
     required this.activeMenu,
     required this.requesterOptions,
@@ -778,6 +795,7 @@ class DashboardView extends StatelessWidget {
 
   final List<PartRequest> requests;
   final List<PartRequest> allRequests;
+  final UserProfile? userProfile;
   final PartRequest? selectedRequest;
   final String activeMenu;
   final List<String> requesterOptions;
@@ -821,6 +839,7 @@ class DashboardView extends StatelessWidget {
           pendingCount: pendingCount,
           outstandingTotal: outstandingTotal,
           activeMenu: activeMenu,
+          userProfile: userProfile,
           requesterOptions: requesterOptions,
           requesterCounts: requesterCounts,
           selectedRequester: selectedRequester,
@@ -867,6 +886,7 @@ class _DashboardContent extends StatelessWidget {
     required this.pendingCount,
     required this.outstandingTotal,
     required this.activeMenu,
+    required this.userProfile,
     required this.requesterOptions,
     required this.requesterCounts,
     required this.selectedRequester,
@@ -895,6 +915,7 @@ class _DashboardContent extends StatelessWidget {
   final int pendingCount;
   final double outstandingTotal;
   final String activeMenu;
+  final UserProfile? userProfile;
   final List<String> requesterOptions;
   final Map<String, int> requesterCounts;
   final String? selectedRequester;
@@ -927,6 +948,7 @@ class _DashboardContent extends StatelessWidget {
         if (!compactShell) ...[
           Sidebar(
             activeMenu: activeMenu,
+            userProfile: userProfile,
             onMenuSelected: onMenuSelected,
             onLogout: onLogout,
             scrollable: usePageScrollLayout,
@@ -1011,6 +1033,7 @@ class _DashboardContent extends StatelessWidget {
                     _DashboardHeader(
                       onLogout: onLogout,
                       onRefresh: onRefresh,
+                      userProfile: userProfile,
                       compact: compactHeader,
                       isLoadingRequests: isLoadingRequests,
                       lastUpdatedAt: lastUpdatedAt,
@@ -1104,12 +1127,14 @@ class Sidebar extends StatelessWidget {
   const Sidebar({
     super.key,
     required this.activeMenu,
+    required this.userProfile,
     required this.onMenuSelected,
     required this.onLogout,
     this.scrollable = false,
   });
 
   final String activeMenu;
+  final UserProfile? userProfile;
   final ValueChanged<String> onMenuSelected;
   final VoidCallback onLogout;
   final bool scrollable;
@@ -1125,6 +1150,8 @@ class Sidebar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = userProfile ?? const UserProfile.empty();
+
     final sidebarContent = Padding(
       padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
       child: Column(
@@ -1175,24 +1202,24 @@ class Sidebar extends StatelessWidget {
             leading: CircleAvatar(
               radius: 16,
               backgroundColor: const Color(0xFFE8EBF2),
-              child: const Text(
-                'A',
+              child: Text(
+                profile.initials,
                 style: TextStyle(
                   color: Color(0xFF2C3442),
                   fontWeight: FontWeight.w700,
                 ),
               ),
             ),
-            title: const Text(
-              'Aisyah | Approver',
+            title: Text(
+              profile.displayName,
               style: TextStyle(
                 color: Color(0xFF3C4352),
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
             ),
-            subtitle: const Text(
-              'tech@printer-manager.com',
+            subtitle: Text(
+              profile.email,
               style: TextStyle(color: Color(0xFF8A90A0), fontSize: 12),
             ),
           ),
@@ -1276,6 +1303,7 @@ class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader({
     required this.onLogout,
     required this.onRefresh,
+    required this.userProfile,
     required this.compact,
     required this.isLoadingRequests,
     required this.lastUpdatedAt,
@@ -1284,6 +1312,7 @@ class _DashboardHeader extends StatelessWidget {
 
   final VoidCallback onLogout;
   final VoidCallback onRefresh;
+  final UserProfile? userProfile;
   final bool compact;
   final bool isLoadingRequests;
   final DateTime? lastUpdatedAt;
@@ -1291,6 +1320,7 @@ class _DashboardHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final profile = userProfile ?? const UserProfile.empty();
     final subtitle = lastUpdatedAt == null
         ? 'Waiting for first sync.'
         : 'Auto-refresh every ${refreshInterval.inSeconds}s. Last sync ${_formatTime(lastUpdatedAt!)}.';
@@ -1321,8 +1351,8 @@ class _DashboardHeader extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFFE3E6EF)),
       ),
-      child: const Text(
-        'Aisyah | Approver',
+      child: Text(
+        profile.displayName,
         style: TextStyle(
           color: Color(0xFF3C4352),
           fontSize: 13,
@@ -2644,6 +2674,59 @@ class _RequestDateGroup {
 
   final DateTime date;
   final List<PartRequest> requests;
+}
+
+class UserProfile {
+  const UserProfile({
+    required this.name,
+    required this.email,
+    this.profilePhotoUrl,
+  });
+
+  const UserProfile.empty()
+    : name = 'Approver',
+      email = '-',
+      profilePhotoUrl = null;
+
+  final String name;
+  final String email;
+  final String? profilePhotoUrl;
+
+  factory UserProfile.fromJson(Map<String, dynamic> json) {
+    final rawName = _readString(json['name']) ?? '';
+    final rawEmail = _readString(json['email']) ?? '';
+
+    return UserProfile(
+      name: rawName.isEmpty ? 'Approver' : rawName,
+      email: rawEmail,
+      profilePhotoUrl: _readString(json['profile_photo_url']),
+    );
+  }
+
+  UserProfile mergeFallbackEmail(String fallbackEmail) {
+    final normalizedFallback = fallbackEmail.trim();
+    return UserProfile(
+      name: name,
+      email: email.isEmpty ? normalizedFallback : email,
+      profilePhotoUrl: profilePhotoUrl,
+    );
+  }
+
+  String get displayName => name.isEmpty ? 'Approver' : name;
+
+  String get initials {
+    final parts = displayName
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .toList();
+
+    if (parts.isEmpty) {
+      return 'A';
+    }
+
+    return parts.map((part) => part.substring(0, 1).toUpperCase()).join();
+  }
 }
 
 int? _readInt(dynamic value) {
