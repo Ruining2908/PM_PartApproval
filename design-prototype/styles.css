@@ -9,8 +9,10 @@
   --accent-soft: #ffe0c8;
   --forest: #215445;
   --olive: #8aa36e;
-  --done: #1f8b5f;
   --pending: #b8860b;
+  --collected: #6e8f3c;
+  --used: #26776d;
+  --disposed: #6b58b8;
   --returned: #b54242;
   --new: #2b5fd9;
   --shadow: 0 22px 60px rgba(24, 32, 40, 0.12);
@@ -430,8 +432,16 @@ textarea:focus {
   background: linear-gradient(135deg, #a57000, #d79d18);
 }
 
-.status-done {
-  background: linear-gradient(135deg, #1f8b5f, #26ae76);
+.status-collected {
+  background: linear-gradient(135deg, #5f7f2a, #8fb84a);
+}
+
+.status-used {
+  background: linear-gradient(135deg, #1f6f67, #37a199);
+}
+
+.status-disposed {
+  background: linear-gradient(135deg, #5c49a8, #8a72de);
 }
 
 .status-returned {

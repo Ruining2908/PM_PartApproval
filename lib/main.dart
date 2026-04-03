@@ -804,10 +804,10 @@ class DashboardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pendingCount = allRequests
-        .where((request) => request.status != ApprovalStatus.done)
+        .where((request) => !request.status.isClosed)
         .length;
     final outstandingTotal = allRequests
-        .where((request) => request.status != ApprovalStatus.done)
+        .where((request) => !request.status.isClosed)
         .fold<double>(0, (sum, request) => sum + request.cost);
 
     return LayoutBuilder(
@@ -955,7 +955,7 @@ class _DashboardContent extends StatelessWidget {
                       ? Column(
                           children: [
                             MetricCard(
-                              title: 'New + Pending Requests',
+                              title: 'Open Requests',
                               value: '$pendingCount',
                             ),
                             const SizedBox(height: 16),
@@ -970,7 +970,7 @@ class _DashboardContent extends StatelessWidget {
                           children: [
                             Expanded(
                               child: MetricCard(
-                                title: 'New + Pending Requests',
+                                title: 'Open Requests',
                                 value: '$pendingCount',
                               ),
                             ),
@@ -2389,14 +2389,18 @@ class _EditableInputBlock extends StatelessWidget {
 enum ApprovalStatus {
   newRequest(1, 'New', 'New'),
   pending(2, 'Pending', 'Pending'),
-  done(3, 'Done', 'Done'),
-  returned(4, 'Returned', 'Returned');
+  collected(3, 'Collected', 'Collected'),
+  returned(4, 'Returned', 'Returned'),
+  used(5, 'Used', 'Used'),
+  disposed(6, 'Disposed', 'Disposed');
 
   const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
 
   final int apiValue;
   final String label;
   final String shortLabel;
+
+  bool get isClosed => this == ApprovalStatus.disposed;
 
   static ApprovalStatus fromApiValue(dynamic rawStatus) {
     if (rawStatus is Map<String, dynamic>) {
@@ -2408,7 +2412,9 @@ enum ApprovalStatus {
       final nestedName = rawStatus['name']?.toString().toLowerCase();
       if (nestedName != null) {
         return values.firstWhere(
-          (status) => status.shortLabel.toLowerCase() == nestedName,
+          (status) =>
+              status.shortLabel.toLowerCase() == nestedName ||
+              status.label.toLowerCase() == nestedName,
           orElse: () => ApprovalStatus.newRequest,
         );
       }
@@ -2424,7 +2430,9 @@ enum ApprovalStatus {
 
     final stringValue = '$rawStatus'.toLowerCase();
     return values.firstWhere(
-      (status) => status.shortLabel.toLowerCase() == stringValue,
+      (status) =>
+          status.shortLabel.toLowerCase() == stringValue ||
+          status.label.toLowerCase() == stringValue,
       orElse: () => ApprovalStatus.newRequest,
     );
   }
@@ -2443,11 +2451,23 @@ enum ApprovalStatus {
           border: Color(0xFFF4DE9D),
           foreground: Color(0xFFA37500),
         );
-      case ApprovalStatus.done:
+      case ApprovalStatus.collected:
         return const StatusChipStyle(
-          background: Color(0xFFEEF9F1),
-          border: Color(0xFFCFEAD5),
-          foreground: Color(0xFF2E7A46),
+          background: Color(0xFFF2F8EC),
+          border: Color(0xFFD3E4BF),
+          foreground: Color(0xFF5C7F2D),
+        );
+      case ApprovalStatus.used:
+        return const StatusChipStyle(
+          background: Color(0xFFEAF7F6),
+          border: Color(0xFFC2E5E0),
+          foreground: Color(0xFF23756B),
+        );
+      case ApprovalStatus.disposed:
+        return const StatusChipStyle(
+          background: Color(0xFFF3F0FF),
+          border: Color(0xFFD8D0F8),
+          foreground: Color(0xFF6B58B8),
         );
       case ApprovalStatus.returned:
         return const StatusChipStyle(

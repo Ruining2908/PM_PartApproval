@@ -1,8 +1,10 @@
 const statusOptions = [
   { id: 1, label: "New", code: "new", className: "status-new" },
   { id: 2, label: "Pending", code: "pending", className: "status-pending" },
-  { id: 3, label: "Done", code: "done", className: "status-done" },
+  { id: 3, label: "Collected", code: "collected", className: "status-collected" },
   { id: 4, label: "Returned", code: "returned", className: "status-returned" },
+  { id: 5, label: "Used", code: "used", className: "status-used" },
+  { id: 6, label: "Disposed", code: "disposed", className: "status-disposed" },
 ];
 
 const brands = [
@@ -93,6 +95,34 @@ const requests = [
     remark: "Returned to technician for revised justification.",
     user_id: 7,
     created_at: "2026-03-28",
+  },
+  {
+    id: 5005,
+    brand_id: 2,
+    brand_model_id: 21,
+    machine_id: 102,
+    part_category_id: 203,
+    part_name: "Black Toner Cartridge",
+    status: 5,
+    cost: 340,
+    description: "Collected from store and allocated for the next preventive maintenance visit.",
+    remark: "Technician will install during the afternoon slot.",
+    user_id: 8,
+    created_at: "2026-03-27",
+  },
+  {
+    id: 5006,
+    brand_id: 3,
+    brand_model_id: 31,
+    machine_id: 103,
+    part_category_id: 201,
+    part_name: "Waste Toner Bottle",
+    status: 6,
+    cost: 95,
+    description: "Old consumable was removed after replacement and marked for disposal.",
+    remark: "Disposed according to site handling procedure.",
+    user_id: 9,
+    created_at: "2026-03-26",
   },
 ];
 
