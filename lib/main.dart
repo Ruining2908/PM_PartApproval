@@ -53,7 +53,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
   bool _isLoadingRequests = false;
   bool _isUpdatingStatus = false;
   String _query = '';
-  String _activeMenu = 'Part Request Approval';
+  String _activeMenu = 'Menu';
   String? _selectedRequester;
   ApprovalStatus? _selectedStatus;
   String? _loginError;
@@ -1140,12 +1140,7 @@ class Sidebar extends StatelessWidget {
   final bool scrollable;
 
   static const items = [
-    'Store management',
-    'Part Request Approval',
-    'Pending',
-    'Returned',
-    'Reports',
-    'Settings',
+    'Menu',
   ];
 
   @override
