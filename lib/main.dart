@@ -1573,26 +1573,41 @@ class StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final foreground = active
+        ? const Color(0xFF1E2431)
+        : const Color(0xFF667085);
+    final background = active
+        ? const Color(0xFFF6F7FB)
+        : const Color(0xFFFFFFFF);
+    final border = active ? const Color(0xFFBFC6D4) : const Color(0xFFD9DEE8);
+
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: enabled ? onTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
-          color: active
-              ? style.background
-              : style.background.withValues(alpha: enabled ? 0.6 : 0.35),
+          color: background,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: style.border),
+          border: Border.all(color: border),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: style.foreground,
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (active) ...[
+              Icon(Icons.check_rounded, size: 14, color: foreground),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                color: foreground,
+                fontSize: 11,
+                fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1784,10 +1799,10 @@ class _EditableInputBlock extends StatelessWidget {
 }
 
 enum ApprovalStatus {
-  newRequest(1, 'New (1)', 'New'),
-  pending(2, 'Pending (2)', 'Pending'),
-  done(3, 'Done (3)', 'Done'),
-  returned(4, 'Returned (4)', 'Returned');
+  newRequest(1, 'New', 'New'),
+  pending(2, 'Pending', 'Pending'),
+  done(3, 'Done', 'Done'),
+  returned(4, 'Returned', 'Returned');
 
   const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
 
