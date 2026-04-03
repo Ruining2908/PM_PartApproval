@@ -54,6 +54,8 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
   bool _isUpdatingStatus = false;
   String _query = '';
   String _activeMenu = 'Part Request Approval';
+  String? _selectedRequester;
+  ApprovalStatus? _selectedStatus;
   String? _loginError;
   String? _requestError;
   DateTime? _lastUpdatedAt;
@@ -132,8 +134,12 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
 
       if (!mounted) return;
 
+      final menuScopedRequests = _filterRequestsByActiveMenu(requests);
+
       setState(() {
         _requests = requests;
+        _selectedRequester = _resolveSelectedRequester(menuScopedRequests);
+        _selectedStatus = _resolveSelectedStatus(menuScopedRequests);
         _selectedRequest = nextSelected;
         _lastUpdatedAt = DateTime.now();
         _requestError = null;
@@ -292,6 +298,7 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
       _requestError = null;
       _loginError = null;
       _lastUpdatedAt = null;
+      _selectedRequester = null;
       _requests = const [];
       _selectedRequest = null;
     });
@@ -334,23 +341,93 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
     );
   }
 
-  List<PartRequest> get _filteredRequests {
-    final base = switch (_activeMenu) {
+  List<PartRequest> _filterRequestsByActiveMenu(List<PartRequest> requests) {
+    return switch (_activeMenu) {
       'Pending' =>
-        _requests
+        requests
             .where((request) => request.status == ApprovalStatus.pending)
             .toList(),
       'Returned' =>
-        _requests
+        requests
             .where((request) => request.status == ApprovalStatus.returned)
             .toList(),
-      _ => _requests,
+      _ => requests,
+    };
+  }
+
+  List<PartRequest> get _menuScopedRequests =>
+      _filterRequestsByActiveMenu(_requests);
+
+  List<String> get _requestedByOptions {
+    final names = _requestedByCounts.keys.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names;
+  }
+
+  Map<String, int> get _requestedByCounts {
+    final counts = <String, int>{};
+
+    for (final request in _menuScopedRequests) {
+      final name = request.requestedBy.trim();
+      if (name.isEmpty || name == '-') continue;
+      counts.update(name, (value) => value + 1, ifAbsent: () => 1);
+    }
+
+    return counts;
+  }
+
+  Map<ApprovalStatus, int> get _statusCounts {
+    final counts = <ApprovalStatus, int>{
+      for (final status in ApprovalStatus.values) status: 0,
     };
 
-    if (_query.isEmpty) return base;
+    for (final request in _menuScopedRequests) {
+      counts.update(request.status, (value) => value + 1);
+    }
+
+    return counts;
+  }
+
+  String? _resolveSelectedRequester(List<PartRequest> requests) {
+    final availableRequesters = requests
+        .map((request) => request.requestedBy.trim())
+        .where((name) => name.isNotEmpty && name != '-')
+        .toSet();
+
+    final selectedRequester = _selectedRequester;
+    if (selectedRequester == null) return null;
+    if (availableRequesters.contains(selectedRequester)) {
+      return selectedRequester;
+    }
+    return null;
+  }
+
+  ApprovalStatus? _resolveSelectedStatus(List<PartRequest> requests) {
+    final selectedStatus = _selectedStatus;
+    if (selectedStatus == null) return null;
+
+    final availableStatuses = requests.map((request) => request.status).toSet();
+    if (availableStatuses.contains(selectedStatus)) return selectedStatus;
+    return null;
+  }
+
+  List<PartRequest> get _filteredRequests {
+    final base = _menuScopedRequests;
+
+    final statusFiltered = _selectedStatus == null
+        ? base
+        : base.where((request) => request.status == _selectedStatus).toList();
+
+    final requesterFiltered = _selectedRequester == null
+        ? statusFiltered
+        : statusFiltered
+              .where((request) => request.requestedBy == _selectedRequester)
+              .toList();
+
+    if (_query.isEmpty) return requesterFiltered;
 
     final normalized = _query.toLowerCase();
-    return base.where((request) {
+    return requesterFiltered.where((request) {
       final haystack = [
         request.idLabel,
         request.partName,
@@ -377,6 +454,11 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
                 allRequests: _requests,
                 selectedRequest: _selectedRequest,
                 activeMenu: _activeMenu,
+                requesterOptions: _requestedByOptions,
+                requesterCounts: _requestedByCounts,
+                selectedRequester: _selectedRequester,
+                statusCounts: _statusCounts,
+                selectedStatus: _selectedStatus,
                 query: _query,
                 isLoadingRequests: _isLoadingRequests,
                 isUpdatingStatus: _isUpdatingStatus,
@@ -386,6 +468,12 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
                 onMenuSelected: (value) {
                   setState(() {
                     _activeMenu = value;
+                    _selectedRequester = _resolveSelectedRequester(
+                      _menuScopedRequests,
+                    );
+                    _selectedStatus = _resolveSelectedStatus(
+                      _menuScopedRequests,
+                    );
                     _selectedRequest = _resolveSelectedRequest(
                       _filteredRequests,
                     );
@@ -395,6 +483,22 @@ class _ApprovalHomePageState extends State<ApprovalHomePage> {
                 onSearchChanged: (value) {
                   setState(() {
                     _query = value;
+                    _selectedRequest = _resolveSelectedRequest(
+                      _filteredRequests,
+                    );
+                  });
+                },
+                onRequesterSelected: (value) {
+                  setState(() {
+                    _selectedRequester = value;
+                    _selectedRequest = _resolveSelectedRequest(
+                      _filteredRequests,
+                    );
+                  });
+                },
+                onStatusFilterSelected: (value) {
+                  setState(() {
+                    _selectedStatus = value;
                     _selectedRequest = _resolveSelectedRequest(
                       _filteredRequests,
                     );
@@ -651,6 +755,11 @@ class DashboardView extends StatelessWidget {
     required this.allRequests,
     required this.selectedRequest,
     required this.activeMenu,
+    required this.requesterOptions,
+    required this.requesterCounts,
+    required this.selectedRequester,
+    required this.statusCounts,
+    required this.selectedStatus,
     required this.query,
     required this.isLoadingRequests,
     required this.isUpdatingStatus,
@@ -660,6 +769,8 @@ class DashboardView extends StatelessWidget {
     required this.onMenuSelected,
     required this.onLogout,
     required this.onSearchChanged,
+    required this.onRequesterSelected,
+    required this.onStatusFilterSelected,
     required this.onRequestSelected,
     required this.onStatusChanged,
     required this.onRefresh,
@@ -669,6 +780,11 @@ class DashboardView extends StatelessWidget {
   final List<PartRequest> allRequests;
   final PartRequest? selectedRequest;
   final String activeMenu;
+  final List<String> requesterOptions;
+  final Map<String, int> requesterCounts;
+  final String? selectedRequester;
+  final Map<ApprovalStatus, int> statusCounts;
+  final ApprovalStatus? selectedStatus;
   final String query;
   final bool isLoadingRequests;
   final bool isUpdatingStatus;
@@ -678,6 +794,8 @@ class DashboardView extends StatelessWidget {
   final ValueChanged<String> onMenuSelected;
   final VoidCallback onLogout;
   final ValueChanged<String> onSearchChanged;
+  final ValueChanged<String?> onRequesterSelected;
+  final ValueChanged<ApprovalStatus?> onStatusFilterSelected;
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
@@ -703,6 +821,11 @@ class DashboardView extends StatelessWidget {
           pendingCount: pendingCount,
           outstandingTotal: outstandingTotal,
           activeMenu: activeMenu,
+          requesterOptions: requesterOptions,
+          requesterCounts: requesterCounts,
+          selectedRequester: selectedRequester,
+          statusCounts: statusCounts,
+          selectedStatus: selectedStatus,
           query: query,
           requests: requests,
           selectedRequest: selectedRequest,
@@ -714,6 +837,8 @@ class DashboardView extends StatelessWidget {
           onMenuSelected: onMenuSelected,
           onLogout: onLogout,
           onSearchChanged: onSearchChanged,
+          onRequesterSelected: onRequesterSelected,
+          onStatusFilterSelected: onStatusFilterSelected,
           onRequestSelected: onRequestSelected,
           onStatusChanged: onStatusChanged,
           onRefresh: onRefresh,
@@ -742,6 +867,11 @@ class _DashboardContent extends StatelessWidget {
     required this.pendingCount,
     required this.outstandingTotal,
     required this.activeMenu,
+    required this.requesterOptions,
+    required this.requesterCounts,
+    required this.selectedRequester,
+    required this.statusCounts,
+    required this.selectedStatus,
     required this.query,
     required this.requests,
     required this.selectedRequest,
@@ -753,6 +883,8 @@ class _DashboardContent extends StatelessWidget {
     required this.onMenuSelected,
     required this.onLogout,
     required this.onSearchChanged,
+    required this.onRequesterSelected,
+    required this.onStatusFilterSelected,
     required this.onRequestSelected,
     required this.onStatusChanged,
     required this.onRefresh,
@@ -763,6 +895,11 @@ class _DashboardContent extends StatelessWidget {
   final int pendingCount;
   final double outstandingTotal;
   final String activeMenu;
+  final List<String> requesterOptions;
+  final Map<String, int> requesterCounts;
+  final String? selectedRequester;
+  final Map<ApprovalStatus, int> statusCounts;
+  final ApprovalStatus? selectedStatus;
   final String query;
   final List<PartRequest> requests;
   final PartRequest? selectedRequest;
@@ -774,6 +911,8 @@ class _DashboardContent extends StatelessWidget {
   final ValueChanged<String> onMenuSelected;
   final VoidCallback onLogout;
   final ValueChanged<String> onSearchChanged;
+  final ValueChanged<String?> onRequesterSelected;
+  final ValueChanged<ApprovalStatus?> onStatusFilterSelected;
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
@@ -846,13 +985,21 @@ class _DashboardContent extends StatelessWidget {
                           ],
                         );
 
-                  final panels = RequestListPanel(
+                  final panels = _RequestSection(
                     requests: requests,
+                    requesterOptions: requesterOptions,
+                    requesterCounts: requesterCounts,
+                    selectedRequester: selectedRequester,
+                    statusCounts: statusCounts,
+                    selectedStatus: selectedStatus,
                     selectedRequest: selectedRequest,
                     isLoadingRequests: isLoadingRequests,
                     isUpdatingStatus: isUpdatingStatus,
+                    onRequesterSelected: onRequesterSelected,
+                    onStatusFilterSelected: onStatusFilterSelected,
                     onRequestSelected: onRequestSelected,
                     onStatusChanged: onStatusChanged,
+                    compact: compactHeader,
                     expandList: !usePageScrollLayout,
                   );
 
@@ -1358,6 +1505,9 @@ class RequestListPanel extends StatelessWidget {
     required this.selectedRequest,
     required this.isLoadingRequests,
     required this.isUpdatingStatus,
+    required this.statusCounts,
+    required this.selectedStatus,
+    required this.onStatusFilterSelected,
     required this.onRequestSelected,
     required this.onStatusChanged,
     this.expandList = true,
@@ -1367,6 +1517,9 @@ class RequestListPanel extends StatelessWidget {
   final PartRequest? selectedRequest;
   final bool isLoadingRequests;
   final bool isUpdatingStatus;
+  final Map<ApprovalStatus, int> statusCounts;
+  final ApprovalStatus? selectedStatus;
+  final ValueChanged<ApprovalStatus?> onStatusFilterSelected;
   final ValueChanged<PartRequest> onRequestSelected;
   final void Function(PartRequest request, ApprovalStatus status)
   onStatusChanged;
@@ -1445,17 +1598,374 @@ class RequestListPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Part Request List',
-              style: TextStyle(
-                color: Color(0xFF16181D),
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 760;
+                final filterChips = Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    _StatusFilterChip(
+                      label: 'All',
+                      count: statusCounts.values.fold<int>(
+                        0,
+                        (sum, count) => sum + count,
+                      ),
+                      selected: selectedStatus == null,
+                      onTap: () => onStatusFilterSelected(null),
+                    ),
+                    ...ApprovalStatus.values.map(
+                      (status) => _StatusFilterChip(
+                        label: status.label,
+                        count: statusCounts[status] ?? 0,
+                        selected: selectedStatus == status,
+                        style: status.style,
+                        onTap: () => onStatusFilterSelected(status),
+                      ),
+                    ),
+                  ],
+                );
+
+                if (compact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Part Request List',
+                        style: TextStyle(
+                          color: Color(0xFF16181D),
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      filterChips,
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Part Request List',
+                        style: TextStyle(
+                          color: Color(0xFF16181D),
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Flexible(child: filterChips),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 14),
             if (expandList) Expanded(child: listContent) else listContent,
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusFilterChip extends StatelessWidget {
+  const _StatusFilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+    this.style,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+  final StatusChipStyle? style;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeStyle =
+        style ??
+        const StatusChipStyle(
+          background: Color(0xFFF3F5FA),
+          border: Color(0xFFD9DEEA),
+          foreground: Color(0xFF364152),
+        );
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? activeStyle.background : Colors.white,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? activeStyle.border : const Color(0xFFE1E5EF),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: selected
+                      ? activeStyle.foreground
+                      : const Color(0xFF5F6777),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? activeStyle.border.withValues(alpha: 0.45)
+                      : const Color(0xFFF4F6FA),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    color: selected
+                        ? activeStyle.foreground
+                        : const Color(0xFF697386),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RequestSection extends StatelessWidget {
+  const _RequestSection({
+    required this.requests,
+    required this.requesterOptions,
+    required this.requesterCounts,
+    required this.selectedRequester,
+    required this.statusCounts,
+    required this.selectedStatus,
+    required this.selectedRequest,
+    required this.isLoadingRequests,
+    required this.isUpdatingStatus,
+    required this.onRequesterSelected,
+    required this.onStatusFilterSelected,
+    required this.onRequestSelected,
+    required this.onStatusChanged,
+    required this.compact,
+    required this.expandList,
+  });
+
+  final List<PartRequest> requests;
+  final List<String> requesterOptions;
+  final Map<String, int> requesterCounts;
+  final String? selectedRequester;
+  final Map<ApprovalStatus, int> statusCounts;
+  final ApprovalStatus? selectedStatus;
+  final PartRequest? selectedRequest;
+  final bool isLoadingRequests;
+  final bool isUpdatingStatus;
+  final ValueChanged<String?> onRequesterSelected;
+  final ValueChanged<ApprovalStatus?> onStatusFilterSelected;
+  final ValueChanged<PartRequest> onRequestSelected;
+  final void Function(PartRequest request, ApprovalStatus status)
+  onStatusChanged;
+  final bool compact;
+  final bool expandList;
+
+  @override
+  Widget build(BuildContext context) {
+    final requestList = RequestListPanel(
+      requests: requests,
+      selectedRequest: selectedRequest,
+      isLoadingRequests: isLoadingRequests,
+      isUpdatingStatus: isUpdatingStatus,
+      statusCounts: statusCounts,
+      selectedStatus: selectedStatus,
+      onStatusFilterSelected: onStatusFilterSelected,
+      onRequestSelected: onRequestSelected,
+      onStatusChanged: onStatusChanged,
+      expandList: expandList,
+    );
+
+    final requesterPanel = RequestedByFilterPanel(
+      requesterOptions: requesterOptions,
+      requesterCounts: requesterCounts,
+      selectedRequester: selectedRequester,
+      onRequesterSelected: onRequesterSelected,
+    );
+
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [requesterPanel, const SizedBox(height: 16), requestList],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 240, child: requesterPanel),
+        const SizedBox(width: 16),
+        Expanded(child: requestList),
+      ],
+    );
+  }
+}
+
+class RequestedByFilterPanel extends StatelessWidget {
+  const RequestedByFilterPanel({
+    super.key,
+    required this.requesterOptions,
+    required this.requesterCounts,
+    required this.selectedRequester,
+    required this.onRequesterSelected,
+  });
+
+  final List<String> requesterOptions;
+  final Map<String, int> requesterCounts;
+  final String? selectedRequester;
+  final ValueChanged<String?> onRequesterSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE6E8F0)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Requested By',
+              style: TextStyle(
+                color: Color(0xFF16181D),
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Filter the part request list by requester.',
+              style: const TextStyle(color: Color(0xFF818898), fontSize: 13),
+            ),
+            const SizedBox(height: 14),
+            _RequestedByFilterItem(
+              label: 'All Users',
+              count: requesterCounts.values.fold<int>(
+                0,
+                (sum, count) => sum + count,
+              ),
+              selected: selectedRequester == null,
+              onTap: () => onRequesterSelected(null),
+            ),
+            if (requesterOptions.isEmpty) ...[
+              const SizedBox(height: 14),
+              const Text(
+                'No requester names available yet.',
+                style: TextStyle(color: Color(0xFF8A90A0), fontSize: 13),
+              ),
+            ] else ...[
+              const SizedBox(height: 10),
+              ...requesterOptions.map(
+                (requester) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _RequestedByFilterItem(
+                    label: requester,
+                    count: requesterCounts[requester] ?? 0,
+                    selected: requester == selectedRequester,
+                    onTap: () => onRequesterSelected(requester),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RequestedByFilterItem extends StatelessWidget {
+  const _RequestedByFilterItem({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.count,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? const Color(0xFFF3F5FA) : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: selected
+                        ? const Color(0xFF1A202C)
+                        : const Color(0xFF5F6777),
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                  ),
+                ),
+              ),
+              if (count != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? const Color(0xFFE1E7F5)
+                        : const Color(0xFFF5F6FA),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    '$count',
+                    style: const TextStyle(
+                      color: Color(0xFF4F5666),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -2173,15 +2683,12 @@ List<_RequestDateGroup> _groupRequestsByDate(List<PartRequest> requests) {
     final date = request.createdDate;
     final normalizedDate = DateTime(date.year, date.month, date.day);
 
-    if (grouped.isNotEmpty &&
-        _isSameDay(grouped.last.date, normalizedDate)) {
+    if (grouped.isNotEmpty && _isSameDay(grouped.last.date, normalizedDate)) {
       grouped.last.requests.add(request);
       continue;
     }
 
-    grouped.add(
-      _RequestDateGroup(date: normalizedDate, requests: [request]),
-    );
+    grouped.add(_RequestDateGroup(date: normalizedDate, requests: [request]));
   }
 
   return grouped;
@@ -2208,15 +2715,7 @@ String _formatRequestSectionDate(DateTime dateTime) {
     'Nov',
     'Dec',
   ];
-  const weekdays = [
-    'Mon',
-    'Tue',
-    'Wed',
-    'Thu',
-    'Fri',
-    'Sat',
-    'Sun',
-  ];
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
   final weekday = weekdays[dateTime.weekday - 1];
   final month = months[dateTime.month - 1];
