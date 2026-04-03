@@ -1271,63 +1271,15 @@ class _Toolbar extends StatelessWidget {
         );
 
         if (compact) {
-          return Column(
-            children: [
-              searchBox,
-              const SizedBox(height: 12),
-              const Align(
-                alignment: Alignment.centerLeft,
-                child: Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _ToolbarChip(label: 'Server list sync enabled'),
-                    _ToolbarChip(label: 'Search on loaded results'),
-                  ],
-                ),
-              ),
-            ],
-          );
+          return searchBox;
         }
 
         return Row(
           children: [
             Expanded(child: searchBox),
-            const SizedBox(width: 12),
-            const _ToolbarChip(label: 'Server list sync enabled'),
-            const SizedBox(width: 8),
-            const _ToolbarChip(label: 'Search on loaded results'),
           ],
         );
       },
-    );
-  }
-}
-
-class _ToolbarChip extends StatelessWidget {
-  const _ToolbarChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE3E6EF)),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Color(0xFF596071),
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
     );
   }
 }
@@ -1508,18 +1460,28 @@ class RequestRowCard extends StatelessWidget {
           ],
         );
 
-        final statusWrap = Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: ApprovalStatus.values.map((status) {
-            return StatusChip(
-              label: status.label,
-              active: request.status == status,
-              style: status.style,
-              enabled: !isBusy,
-              onTap: () => onStatusChanged(status),
-            );
-          }).toList(),
+        final statusSummary = Column(
+          crossAxisAlignment: compact
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.end,
+          children: [
+            const Text(
+              'Status',
+              style: TextStyle(
+                color: Color(0xFF8A90A0),
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            StatusChip(
+              label: request.status.label,
+              active: true,
+              style: request.status.style,
+              enabled: false,
+              onTap: () => onStatusChanged(request.status),
+            ),
+          ],
         );
 
         return Material(
@@ -1544,7 +1506,7 @@ class RequestRowCard extends StatelessWidget {
                       children: [
                         requestInfo,
                         const SizedBox(height: 12),
-                        statusWrap,
+                        statusSummary,
                       ],
                     )
                   : Row(
@@ -1552,7 +1514,7 @@ class RequestRowCard extends StatelessWidget {
                       children: [
                         Expanded(child: requestInfo),
                         const SizedBox(width: 16),
-                        Flexible(child: statusWrap),
+                        statusSummary,
                       ],
                     ),
             ),
@@ -1664,7 +1626,7 @@ class ApprovalDetailPanel extends StatelessWidget {
               DetailCard(
                 title: 'Selected: ${request!.idLabel}',
                 body:
-                    '${request!.partName} is waiting for approver action. The status chips on the left send PUT /api/mobile/part-request/${request!.id} with the mapped status value immediately.',
+                    '${request!.partName} was submitted with status ${request!.status.label}. The list now shows only the selected status for each request.',
               ),
               const SizedBox(height: 12),
               DetailCard(
