@@ -1,543 +1,450 @@
-# WOD V3 API And Integration Handoff
+# Part Approval App API Handoff
 
-This file is a handoff for another agent building a separate Flutter app from the same backend contract.
+This document is for another AI agent that needs to work on this Flutter app without rereading the whole codebase. It describes every backend API currently represented in the app, the purpose of each endpoint, how the client sends requests, and what response shapes the app can tolerate.
 
-## Project Overview
+## Scope
 
-- App name: `WOD App`
-- Repository: `https://github.com/E-DSSB/wod_v3.git`
-- Production API base URL: `https://printer-manager.com`
-- API style: JSON over HTTP
-- Auth style: Bearer token in `Authorization` header
-- HTTP client in current app: `dio`
+- App type: Flutter desktop/web client
+- Primary API client file: [lib/part_request_api.dart](/Users/devedocument/Documents/PM_Part Approval/lib/part_request_api.dart)
+- Main UI integration file: [lib/main.dart](/Users/devedocument/Documents/PM_Part Approval/lib/main.dart)
+- Production default base URL: `https://sit.printer-manager.com/`
+- API style: JSON over HTTP with bearer-token auth after login
 
-## Global API Configuration
+## Runtime Configuration
 
-- Base URL: `https://printer-manager.com`
-- Default headers:
-  - `Accept: application/json`
-  - `Content-Type: application/json; charset=utf-8`
-- Timeouts:
-  - connect: 15s
-  - receive: 15s
-  - send: 15s
-- Retry behavior in current app:
-  - `GET`, `POST`, `PUT`, `DELETE` default to retry enabled
-  - max retries: `3`
+The app uses compile-time Dart environment variables:
 
-## Authentication
+- `API_BASE_URL`
+  - Purpose: overrides the backend base URL
+  - Default: `https://sit.printer-manager.com/`
+- `DEMO_MODE`
+  - Purpose: bypasses the live backend and uses in-memory sample data
+  - Default: `false`
 
-### Login
+Example run:
 
-- Method: `POST`
-- URL: `https://printer-manager.com/api/mobile/login`
-- Request body:
-
-```json
-{
-  "email": "user@example.com",
-  "password": "secret"
-}
+```bash
+ flutter run --dart-define=API_BASE_URL=https://sit.printer-manager.com/
+flutter run --dart-define=DEMO_MODE=true
 ```
 
-- Expected success:
-  - HTTP `200`
-  - response contains `token`
-- Current app behavior:
-  - stores `data["token"]`
-  - then fetches profile
+## HTTP Client Rules
 
-### Auth Header
+All requests are sent through `PartRequestApi`.
 
-After login, all authenticated requests send:
+Default headers:
+
+```http
+Accept: application/json
+Content-Type: application/json; charset=utf-8
+```
+
+Authenticated requests also include:
 
 ```http
 Authorization: Bearer <token>
 ```
 
-### Unauthorized Handling
+Notes:
 
-- On HTTP `401`, current app clears the token and forces user back to login.
+- Login is the only request sent without the auth header.
+- The app stores the token only in memory inside `PartRequestApi`; there is no persisted session storage in the current implementation.
+- Any non-2xx response throws `ApiException`.
+- Error messages are extracted in this order:
+  - `message`
+  - `error`
+  - `errors`
+  - fallback: `Request failed (<statusCode>).`
 
-## Local Storage Contract Used By Current App
+## Flexible Response Parsing
 
-- token key: `auth_token`
-- user key: `user_data`
-- login flag key: `is_logged_in`
+The client is intentionally tolerant of backend response wrappers.
 
-## API Endpoints
+### Token extraction after login
+
+The app accepts the token from any of these locations:
+
+- `token`
+- `access_token`
+- `data.token`
+- `data.access_token`
+
+### List extraction
+
+For list endpoints, the app accepts the list from:
+
+- `data`
+- `results`
+- `items`
+- top-level response body if the body itself is a list
+- `data.data` as a nested fallback
+
+### Single-item extraction
+
+For item/detail endpoints, the app accepts the object from:
+
+- `data`
+- `item`
+- top-level response body if the body itself is already an object
+
+This means a replacement backend should preserve the fields, but it does not have to match one exact wrapper format.
+
+## Endpoints
 
 ### 1. Login
 
-- Method: `POST`
+- Client method: `PartRequestApi.login`
+- HTTP method: `POST`
 - Path: `/api/mobile/login`
-- Full URL: `https://printer-manager.com/api/mobile/login`
-- Purpose: authenticate user
+- Auth required: no
+- Purpose: authenticate the user and obtain a bearer token
+- Used in UI: yes, during sign-in
 
-### 2. Profile
+Request body:
 
-- Method: `GET`
-- Path: `/api/mobile/profile`
-- Full URL: `https://printer-manager.com/api/mobile/profile`
-- Purpose: fetch current logged-in user profile
-- Current app expects:
+```json
+{
+  "email": "tech@printer-manager.com",
+  "password": "secret"
+}
+```
+
+Successful response examples accepted by the app:
+
+```json
+{
+  "token": "jwt-or-api-token"
+}
+```
 
 ```json
 {
   "data": {
-    "id": 123,
-    "name": "User Name",
-    "email": "user@example.com",
-    "profile_photo_url": "..."
+    "access_token": "jwt-or-api-token"
   }
 }
 ```
 
-### 3. Update Profile
+Usage notes:
 
-- Method: `POST`
+- If login succeeds but no token is found in any accepted location, the app throws an error.
+- On web builds, browser login may fail because the backend can reject `POST /api/mobile/login` via CSRF/origin policy. The app explicitly warns that desktop builds are safer for live login.
+
+### 2. Current User Profile
+
+- Client method: `PartRequestApi.getProfile`
+- HTTP method: `GET`
 - Path: `/api/mobile/profile`
-- Full URL: `https://printer-manager.com/api/mobile/profile`
-- Purpose: update user profile
-- Request body:
+- Auth required: yes
+- Purpose: fetch the logged-in approver profile shown in the dashboard shell
+- Used in UI: yes, immediately after login
 
-```json
-{
-  "name": "User Name",
-  "email": "user@example.com"
-}
-```
-
-### 4. Work Order Types
-
-- Method: `GET`
-- Path: `/api/mobile/work-order-type`
-- Full URL: `https://printer-manager.com/api/mobile/work-order-type`
-- Purpose: fetch work order type master data
-- Current app expects a top-level JSON array, not wrapped in `data`
-
-Example item shape:
-
-```json
-{
-  "id": 1,
-  "team_id": 1,
-  "name": "PM",
-  "description": "Preventive Maintenance",
-  "default": true,
-  "order": 1,
-  "created_at": "2024-01-01 00:00:00",
-  "updated_at": "2024-01-01 00:00:00",
-  "deleted_at": null
-}
-```
-
-### 5. Status List
-
-- Method: `GET`
-- Path: `/api/mobile/status`
-- Full URL: `https://printer-manager.com/api/mobile/status`
-- Purpose: fetch status master data
-- Used to determine:
-  - new
-  - in progress
-  - pending
-  - closed
-- Current app expects a top-level JSON array
-
-Example item shape:
-
-```json
-{
-  "id": 1,
-  "team_id": 1,
-  "name": "In Progress",
-  "description": "Currently being serviced",
-  "default": false,
-  "closed": false,
-  "order": 2,
-  "created_at": "2024-01-01 00:00:00",
-  "updated_at": "2024-01-01 00:00:00",
-  "deleted_at": null
-}
-```
-
-### 6. Search Work Orders
-
-- Method: `POST`
-- Path: `/api/mobile/search/work-orders`
-- Full URL: `https://printer-manager.com/api/mobile/search/work-orders`
-- Purpose: search/filter work orders by technician, date range, status, and optionally type/customer
-
-Example request body used by current app:
-
-```json
-{
-  "serviced_by_id": "60",
-  "created_at": {
-    "from": "2026-03-01",
-    "to": "2026-04-03"
-  },
-  "status_id": ["1", "2", "3"],
-  "work_order_type_id": "4",
-  "customer_id": "12"
-}
-```
-
-Notes:
-
-- `serviced_by_id` is sent as a string.
-- `status_id` is sent as an array of string IDs.
-- `work_order_type_id` and `customer_id` are optional.
-- Current app expects:
-
-```json
-{
-  "data": [
-    {
-      "id": 1001,
-      "created_at": "2026-04-02 08:00:00",
-      "attend_at": "2026-04-02 09:00:00",
-      "customer": {},
-      "machine": {},
-      "work_order_type": {},
-      "status": {},
-      "time_in": "2026-04-02 09:05:00",
-      "time_out": null,
-      "tags": []
-    }
-  ]
-}
-```
-
-### 7. Work Order Detail
-
-- Method: `GET`
-- Path: `/api/mobile/work-orders/{workOrderId}`
-- Example: `https://printer-manager.com/api/mobile/work-orders/123`
-- Purpose: fetch full work order details and history
-
-Current app expects:
+Expected fields consumed by the app:
 
 ```json
 {
   "data": {
-    "id": 123,
-    "customer": {},
-    "machine": {},
-    "work_order_type": {},
-    "status": {},
-    "open_remarks": "",
-    "close_remarks": "",
-    "created_at": "2026-04-02 08:00:00",
-    "attended_at": null,
-    "time_in": "",
-    "time_out": "",
-    "history": [],
-    "tags": []
+    "id": 1,
+    "name": "Demo Approver",
+    "email": "demo.approver@printer-manager.com",
+    "profile_photo_url": null
   }
 }
 ```
 
-Important nested structures used by the app:
+Usage notes:
 
-- `customer`
-  - `id`
-  - `name`
-  - `phone`
-  - `level`
-- `machine`
-  - `id`
-  - `name`
-  - `address`
-- `status`
-  - `id`
-  - `name`
-  - `closed`
-- `work_order_type`
-  - `id`
-  - `name`
-- `history[]`
-  - `updated_at`
-  - `open_remarks`
-  - `close_remarks`
-  - `serviced_by_id`
-  - `attend_at_date_only`
-  - `time_in_local`
-  - `time_out_local`
-  - `serviced_by`
+- Only `name`, `email`, and `profile_photo_url` are used by the current UI.
+- If profile fetch fails, the app still continues using the login email as a fallback identity.
 
-### 8. Update Existing Work Order
+### 3. List Part Requests
 
-- Method: `POST`
-- Path: `/api/mobile/work-orders/{workOrderId}`
-- Example: `https://printer-manager.com/api/mobile/work-orders/123`
-- Purpose:
-  - start work order
-  - update status
-  - complete work order
+- Client method: `PartRequestApi.listPartRequests`
+- HTTP method: `GET`
+- Path: `/api/mobile/part-request`
+- Auth required: yes
+- Purpose: load the approval dashboard request list
+- Used in UI: yes, on initial dashboard load and every 20 seconds for auto-refresh
 
-#### Start Work Order Payload
+Minimal item shape expected by the current UI:
 
 ```json
 {
-  "customer_id": 10,
-  "machine_id": 20,
-  "work_order_type_id": 3,
+  "id": 5001,
+  "part_name": "Cyan Drum Kit",
+  "brand_id": 1,
+  "brand": { "id": 1, "name": "Canon" },
+  "brand_model_id": 11,
+  "brand_model": { "id": 11, "name": "iR ADV DX C3926" },
+  "machine_id": 101,
+  "machine": { "id": 101, "name": "HQ Printer A" },
+  "part_category_id": 201,
+  "part_category": { "id": 201, "name": "Drum Unit" },
+  "user": { "id": 7, "name": "Aisyah" },
+  "cost": 780.0,
+  "created_at": "2026-04-02",
+  "description": "Drum count is high and print quality shows repeated marks.",
+  "remark": "Need urgent approval before next PM cycle.",
+  "status": 1,
+  "status_id": 1
+}
+```
+
+Usage notes:
+
+- The list is sorted client-side by `created_at`, newest first.
+- The UI can search and filter locally after loading this list.
+- The app tracks new request IDs between refreshes to show a “new requests found” snackbar.
+
+### 4. Show Part Request Detail
+
+- Client method: `PartRequestApi.showPartRequest`
+- HTTP method: `GET`
+- Path: `/api/mobile/part-request/{id}`
+- Auth required: yes
+- Purpose: fetch a single request with fuller data before status updates
+- Used in UI: yes, but only when the list item lacks the IDs needed for update payload construction
+
+Example:
+
+```http
+GET /api/mobile/part-request/5001
+```
+
+Usage notes:
+
+- The current UI first tries to update from list data.
+- If any of these IDs are missing, it fetches detail before sending the update:
+  - `brand_id`
+  - `brand_model_id`
+  - `machine_id`
+  - `part_category_id`
+
+### 5. Create Part Request
+
+- Client method: `PartRequestApi.createPartRequest`
+- HTTP method: `POST`
+- Path: `/api/mobile/part-request`
+- Auth required: yes
+- Purpose: create a new part request
+- Used in UI: not currently wired into the production Flutter screens, but fully implemented in the API client
+
+Request body:
+
+```json
+{
+  "part_name": "Upper Fuser Roller",
+  "description": "Temperature inconsistency during long print runs.",
+  "remark": "Urgent replacement requested.",
+  "brand_id": 2,
+  "brand_model_id": 21,
+  "machine_id": 102,
+  "part_category_id": 202,
+  "status": 1,
+  "status_id": 1
+}
+```
+
+Usage notes:
+
+- The client does not enforce a schema for creation; it forwards the provided map as-is.
+- Another agent adding a create screen should reuse the same key names used elsewhere in the app:
+  - `part_name`
+  - `description`
+  - `remark`
+  - `brand_id`
+  - `brand_model_id`
+  - `machine_id`
+  - `part_category_id`
+  - optionally `status` and `status_id`
+
+### 6. Update Part Request
+
+- Client method: `PartRequestApi.updatePartRequest`
+- HTTP method: `PUT`
+- Path: `/api/mobile/part-request/{id}`
+- Auth required: yes
+- Purpose: update an existing part request, currently used for approval status changes
+- Used in UI: yes
+
+Current update payload built by the UI:
+
+```json
+{
+  "part_name": "Cyan Drum Kit",
+  "description": "Drum count is high and print quality shows repeated marks.",
+  "remark": "Need urgent approval before next PM cycle.",
+  "status": 2,
   "status_id": 2,
-  "time_in": "2026-04-02 10:30:45"
+  "brand_id": 1,
+  "brand_model_id": 11,
+  "machine_id": 101,
+  "part_category_id": 201
 }
 ```
 
-#### Complete Work Order Payload
+Usage notes:
+
+- The UI does not send a partial status-only patch. It sends a full update payload containing:
+  - `part_name`
+  - `description`
+  - `remark`
+  - `status`
+  - `status_id`
+  - related foreign keys when available
+- Status changes always require user confirmation in the UI before the request is sent.
+- After a successful update, the returned item is reparsed and merged back into the local list.
+
+### 7. Search Part Requests
+
+- Client method: `PartRequestApi.searchPartRequests`
+- HTTP method: `POST`
+- Path: `/api/mobile/search/part-requests`
+- Auth required: yes
+- Purpose: server-side search/filter for part requests
+- Used in UI: not currently used by the live Flutter screens
+
+Request body:
 
 ```json
 {
-  "customer_id": 10,
-  "machine_id": 20,
-  "work_order_type_id": 3,
-  "status_id": 5,
-  "close_remarks": "Completed successfully",
-  "time_in": "2026-04-02 10:30:45",
-  "time_out": "2026-04-02 12:15:00",
-  "counter_bw": 1200,
-  "counter_c": 450
-}
-```
-
-#### Generic Status Update Payload
-
-```json
-{
-  "customer_id": 10,
-  "machine_id": 20,
-  "work_order_type_id": 3,
-  "status_id": 4,
-  "time_in": "2026-04-02 10:30:45",
-  "time_out": "2026-04-02 12:15:00"
-}
-```
-
-### 9. Create Work Order
-
-- Method: `POST`
-- Path: `/api/mobile/work-orders`
-- Full URL: `https://printer-manager.com/api/mobile/work-orders`
-- Purpose:
-  - create work order from QR scan
-  - create follow-up work order
-
-#### QR-based Create Payload
-
-```json
-{
-  "customer_id": "10",
-  "machine_id": "20",
-  "work_order_type_id": "3",
-  "status_id": "2",
-  "open_remarks": "Created from QR scan for machine: Machine A (REF001)",
-  "time_in": "2026-04-02 10:30:45"
-}
-```
-
-Notes:
-
-- In `MachineService.createWorkOrder`, these IDs are sent as strings.
-- Current code treats HTTP `201` as success there.
-- Another create flow also accepts HTTP `200` or `201`.
-
-Expected success response may be either wrapped or unwrapped. Current code handles both styles for creation flows.
-
-Unwrapped example:
-
-```json
-{
-  "id": 999,
-  "team_id": 1,
-  "customer_id": "10",
-  "machine_id": "20",
-  "created_by_id": 1,
-  "serviced_by_id": 1,
-  "work_order_type_id": "3",
-  "status_id": "2",
-  "open_remarks": "Created from QR scan",
-  "time_in": "2026-04-02 10:30:45",
-  "time_out": null,
-  "counter_bw": null,
-  "counter_c": null,
-  "parent_id": null,
-  "attend_at": null,
-  "updated_at": "2026-04-02 10:30:45",
-  "created_at": "2026-04-02 10:30:45",
-  "attend_at_date_only": "2026-04-02",
-  "time_in_local": "10:30",
-  "time_out_local": ""
-}
-```
-
-Wrapped example also appears possible:
-
-```json
-{
-  "data": {
-    "id": 999
+  "status_id": [1, 2],
+  "machine_id": 101,
+  "brand_id": 1,
+  "created_at": {
+    "from": "2026-04-01",
+    "to": "2026-04-16"
   }
 }
 ```
 
-### 10. Get Machine By QR UUID
+Usage notes:
 
-- Method: `POST`
-- Path: `/api/mobile/machine-for-qr`
-- Full URL: `https://printer-manager.com/api/mobile/machine-for-qr`
-- Purpose: resolve scanned QR UUID into machine details
+- The client forwards any filter map as-is.
+- The current UI does all filtering locally after `listPartRequests`, so this method is ready for future use but not yet integrated.
 
-Request:
+## Data Model Consumed By The UI
 
-```json
-{
-  "uuid": "b625d458-f754-4037-880c-79dc4bbf8cd0"
-}
+The UI converts backend JSON into the `PartRequest` model. These fields are the most important.
+
+### Core request fields
+
+- `id`
+- `part_name`
+- `description`
+- `remark`
+- `cost`
+- `created_at`
+
+### Relationship fields
+
+The parser supports both flat IDs and nested objects.
+
+- Brand
+  - `brand_id`
+  - `brand.name`
+  - fallback: `brand_name`
+- Model
+  - `brand_model_id`
+  - `brand_model.name`
+  - fallback: `brand_model_name`
+- Machine
+  - `machine_id`
+  - `machine.name`
+  - fallback: `machine_name`
+- Category
+  - `part_category_id`
+  - `part_category.name`
+  - fallback: `part_category_name`
+- Requester
+  - `user.name`
+  - fallback: `created_by.name`
+  - fallback: `user_name`
+
+### Status field parsing
+
+The parser accepts status from:
+
+- `status`
+- `status_id`
+- `approval_status`
+
+It can interpret:
+
+- integer IDs
+- numeric strings
+- object form such as `{ "id": 2, "name": "Approved" }`
+- label strings such as `"Approved"`
+
+Compatibility note:
+
+- The current parser also treats the legacy label `"New"` as `Requested` so the UI can tolerate backend responses during rollout.
+
+## Status Mapping Used By This App
+
+The app uses this exact status enum:
+
+| API value | Label |
+| --- | --- |
+| `1` | `Requested` |
+| `2` | `Approved` |
+| `3` | `Pending` |
+| `4` | `Collected` |
+| `5` | `Returned` |
+| `6` | `Used` |
+| `7` | `Disposed` |
+
+Important behavior:
+
+- `Disposed` is treated as the only closed status in the current UI.
+- Status chips and update actions are driven entirely from this mapping.
+
+## Actual App Flow
+
+The current production flow in [lib/main.dart](/Users/devedocument/Documents/PM_Part Approval/lib/main.dart) is:
+
+1. User calls `login(email, password)`.
+2. App stores the returned token in memory.
+3. App calls `getProfile()`.
+4. App calls `listPartRequests()`.
+5. App auto-refreshes `listPartRequests()` every 20 seconds.
+6. If an approver changes status:
+   - app confirms the action
+   - app may call `showPartRequest(id)` if IDs are missing
+   - app sends `updatePartRequest(id, payload)`
+
+## Example Dart Usage
+
+```dart
+final api = PartRequestApi();
+
+await api.login(
+  email: 'tech@printer-manager.com',
+  password: 'secret',
+);
+
+final profile = await api.getProfile();
+final requests = await api.listPartRequests();
+
+final detail = await api.showPartRequest(5001);
+
+  final updated = await api.updatePartRequest(5001, {
+  'part_name': detail['part_name'],
+  'description': detail['description'],
+  'remark': detail['remark'],
+  'status': 2,
+  'status_id': 2,
+  'brand_id': detail['brand_id'],
+  'brand_model_id': detail['brand_model_id'],
+  'machine_id': detail['machine_id'],
+  'part_category_id': detail['part_category_id'],
+});
 ```
 
-Expected response shape:
+## Guidance For Another Agent
 
-```json
-{
-  "status": "success",
-  "machine": {
-    "id": 20,
-    "team_id": 1,
-    "uuid": "b625d458-f754-4037-880c-79dc4bbf8cd0",
-    "customer_id": 10,
-    "name": "Machine A",
-    "reference": "REF001",
-    "serial_number": "SN123",
-    "active": true
-  }
-}
-```
-
-## QR Code Contract
-
-The current app expects QR content like:
-
-```text
-@https://printer-manager.com/redirect/b625d458-f754-4037-880c-79dc4bbf8cd0
-```
-
-Important:
-
-- The app extracts the UUID from the QR content and then calls `/api/mobile/machine-for-qr`.
-- The redirect URL pattern found in code is:
-  - `https://printer-manager.com/redirect/{uuid}`
-
-## External URLs, Deep Links, And Schemes Used
-
-These are not backend APIs, but they are used by the current app.
-
-### Sentry
-
-- DSN:
-  - `https://7c7a28866cb39d8a54f2fc2747771f12@o4510589392125952.ingest.us.sentry.io/4510589393764352`
-
-### Avatar Fallback
-
-- URL:
-  - `https://ui-avatars.com/api/?name={INITIALS}&color=7F9CF5&background=EBF4FF&size=200&bold=true`
-
-### Map Links
-
-- Google Maps web:
-  - `https://www.google.com/maps/search/?api=1&query={lat},{lng}`
-  - `https://www.google.com/maps/search/?api=1&query={encodedAddress}`
-- Android geo scheme:
-  - `geo:{lat},{lng}?q={lat},{lng}`
-  - `geo:0,0?q={encodedAddress}`
-- Waze app scheme:
-  - `waze://?ll={lat},{lng}&navigate=yes`
-  - `waze://?q={encodedAddress}&navigate=yes`
-- Waze web:
-  - `https://waze.com/ul?ll={lat},{lng}&navigate=yes`
-  - `https://waze.com/ul?q={encodedAddress}&navigate=yes`
-- Apple Maps:
-  - `https://maps.apple.com/?ll={lat},{lng}`
-  - `https://maps.apple.com/?address={encodedAddress}`
-
-### Phone / WhatsApp
-
-- Phone:
-  - `tel:{phoneNumber}`
-- WhatsApp app scheme:
-  - `whatsapp://send?phone={numberWithoutPlus}`
-- WhatsApp web:
-  - `https://wa.me/{numberWithoutPlus}`
-
-## Known Validation / Error Behavior
-
-- HTTP `401`
-  - treated as expired session
-  - token cleared
-- HTTP `422`
-  - treated as validation error
-  - expected to include a `message`
-- Other API failures
-  - treated as connection/server errors
-
-## Notes For The New Flutter App
-
-- The current code does not use environment-based API switching. Base URL is hardcoded to production.
-- Some endpoints return wrapped payloads with `data`, while others return top-level arrays or direct objects.
-- Creation endpoints appear inconsistent and may return either:
-  - direct object with `id`
-  - wrapped object under `data`
-- ID fields are sometimes sent as strings and sometimes as ints in the current app. A safer client should tolerate both.
-- The work order search endpoint uses a POST body instead of query parameters.
-- Status and work order type lists are important because business logic depends on names like:
-  - PM
-  - In Progress
-  - Closed vs non-closed statuses
-
-## Recommended Minimal Config Object For Another Agent
-
-```json
-{
-  "baseUrl": "https://printer-manager.com",
-  "defaultHeaders": {
-    "Accept": "application/json",
-    "Content-Type": "application/json; charset=utf-8"
-  },
-  "auth": {
-    "type": "bearer",
-    "loginPath": "/api/mobile/login",
-    "tokenStorageKey": "auth_token"
-  },
-  "endpoints": {
-    "profileGet": "/api/mobile/profile",
-    "profileUpdate": "/api/mobile/profile",
-    "workOrderTypes": "/api/mobile/work-order-type",
-    "statuses": "/api/mobile/status",
-    "searchWorkOrders": "/api/mobile/search/work-orders",
-    "workOrderDetail": "/api/mobile/work-orders/{id}",
-    "updateWorkOrder": "/api/mobile/work-orders/{id}",
-    "createWorkOrder": "/api/mobile/work-orders",
-    "machineForQr": "/api/mobile/machine-for-qr"
-  }
-}
-```
-
-## Source Files Used
-
-- `lib/utils/app_constants.dart`
-- `lib/services/api_service.dart`
-- `lib/controllers/account_controller.dart`
-- `lib/controllers/profile_controller.dart`
-- `lib/controllers/work_order_controller.dart`
-- `lib/controllers/work_order_detail_controller.dart`
-- `lib/services/machine_service.dart`
-- `lib/controllers/qr_scanner_controller.dart`
-- `lib/models/work_order.dart`
-- `lib/models/work_order_detail.dart`
-- `lib/models/machine.dart`
-- `lib/main.dart`
-- `lib/pages/work_order_detail_page.dart`
+- If you are extending the current app, treat `lib/part_request_api.dart` as the source of truth for endpoint paths and tolerant response parsing.
+- If you are adding create or server-side search UI, the client methods already exist and can be wired directly.
+- If the backend response format changes, preserve the field names consumed by `PartRequest.fromJson` and `UserProfile.fromJson` unless you also update the parsers.
+- If you need persistent login, that is not implemented yet; you would need to add secure/local storage around the in-memory token.
+- If you target Flutter web against the live backend, validate CSRF/CORS behavior early because login is the most likely browser failure point.

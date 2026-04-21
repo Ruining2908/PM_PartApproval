@@ -424,8 +424,12 @@ textarea:focus {
   outline: 4px solid rgba(24, 32, 40, 0.08);
 }
 
-.status-new {
+.status-requested {
   background: linear-gradient(135deg, #2b5fd9, #4c89ff);
+}
+
+.status-approved {
+  background: linear-gradient(135deg, #2d7b4f, #4caf72);
 }
 
 .status-pending {

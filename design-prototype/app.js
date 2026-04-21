@@ -1,11 +1,16 @@
 const statusOptions = [
-  { id: 1, label: "New", code: "new", className: "status-new" },
-  { id: 2, label: "Pending", code: "pending", className: "status-pending" },
-  { id: 3, label: "Collected", code: "collected", className: "status-collected" },
-  { id: 4, label: "Returned", code: "returned", className: "status-returned" },
-  { id: 5, label: "Used", code: "used", className: "status-used" },
-  { id: 6, label: "Disposed", code: "disposed", className: "status-disposed" },
+  { id: 1, label: "Requested", code: "requested", className: "status-requested" },
+  { id: 2, label: "Approved", code: "approved", className: "status-approved" },
+  { id: 3, label: "Pending", code: "pending", className: "status-pending" },
+  { id: 4, label: "Collected", code: "collected", className: "status-collected" },
+  { id: 5, label: "Returned", code: "returned", className: "status-returned" },
+  { id: 6, label: "Used", code: "used", className: "status-used" },
+  { id: 7, label: "Disposed", code: "disposed", className: "status-disposed" },
 ];
+
+const selectableStatusOptions = statusOptions.filter((status) =>
+  ["approved", "pending", "collected", "returned"].includes(status.code),
+);
 
 const brands = [
   { id: 1, name: "Canon" },
@@ -64,7 +69,7 @@ const requests = [
     status: 2,
     cost: 1260,
     description: "Temperature inconsistency causing wrinkled output during long runs.",
-    remark: "Vendor quote attached in backend payload.",
+    remark: "Approved for store processing after quote verification.",
     user_id: 8,
     created_at: "2026-04-01",
   },
@@ -77,8 +82,8 @@ const requests = [
     part_name: "Pickup Roller Set",
     status: 3,
     cost: 180,
-    description: "Multiple misfeeds at tray 2 resolved after replacement request.",
-    remark: "Ready for closing review.",
+    description: "Waiting for warehouse allocation before the technician can collect it.",
+    remark: "Pending stock release from central store.",
     user_id: 9,
     created_at: "2026-03-29",
   },
@@ -91,8 +96,8 @@ const requests = [
     part_name: "Magenta Toner Bottle",
     status: 4,
     cost: 0,
-    description: "Requested quantity does not match actual machine consumption history.",
-    remark: "Returned to technician for revised justification.",
+    description: "Collected from store and prepared for the next preventive maintenance visit.",
+    remark: "Technician collection logged at service counter.",
     user_id: 7,
     created_at: "2026-03-28",
   },
@@ -105,8 +110,8 @@ const requests = [
     part_name: "Black Toner Cartridge",
     status: 5,
     cost: 340,
-    description: "Collected from store and allocated for the next preventive maintenance visit.",
-    remark: "Technician will install during the afternoon slot.",
+    description: "Requested quantity does not match actual machine consumption history.",
+    remark: "Returned to technician for revised justification.",
     user_id: 8,
     created_at: "2026-03-27",
   },
@@ -119,10 +124,24 @@ const requests = [
     part_name: "Waste Toner Bottle",
     status: 6,
     cost: 95,
+    description: "Collected part was installed successfully during the scheduled visit.",
+    remark: "Used on-site and job sheet updated.",
+    user_id: 9,
+    created_at: "2026-03-26",
+  },
+  {
+    id: 5007,
+    brand_id: 3,
+    brand_model_id: 31,
+    machine_id: 103,
+    part_category_id: 201,
+    part_name: "Waste Toner Bottle",
+    status: 7,
+    cost: 95,
     description: "Old consumable was removed after replacement and marked for disposal.",
     remark: "Disposed according to site handling procedure.",
     user_id: 9,
-    created_at: "2026-03-26",
+    created_at: "2026-03-25",
   },
 ];
 
@@ -169,7 +188,7 @@ function initialize() {
 }
 
 function hydrateSelects() {
-  populateSelect("#filter-status", statusOptions, "label");
+  populateSelect("#filter-status", selectableStatusOptions, "label");
   populateSelect("#filter-category", categories, "name");
   populateSelect("#filter-machine", machines, "name");
   populateSelect("#filter-user", users, "name");
@@ -349,7 +368,7 @@ function renderList() {
     `;
     requestDescription.textContent = request.description || "No description provided.";
 
-    statusOptions.forEach((status) => {
+    selectableStatusOptions.forEach((status) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = `status-fab ${status.className}`;

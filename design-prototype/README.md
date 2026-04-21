@@ -13,14 +13,15 @@ This is a standalone mobile-first UI prototype inspired by the API handoff in
 
 ## Approval flow
 
-Each part request card includes six floating status buttons on the right side:
+Each part request card includes seven floating status buttons on the right side:
 
-1. New (`1`)
-2. Pending (`2`)
-3. Collected (`3`)
-4. Returned (`4`)
-5. Used (`5`)
-6. Disposed (`6`)
+1. Requested (`1`)
+2. Approved (`2`)
+3. Pending (`3`)
+4. Collected (`4`)
+5. Returned (`5`)
+6. Used (`6`)
+7. Disposed (`7`)
 
 These map naturally to `PUT /api/mobile/part-request/{id}` for status updates.
 

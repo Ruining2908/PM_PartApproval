@@ -5,6 +5,14 @@ import 'package:flutter/material.dart';
 
 import 'part_request_api.dart';
 
+const bool kDemoMode = bool.fromEnvironment('DEMO_MODE', defaultValue: false);
+const List<ApprovalStatus> kSelectableStatuses = <ApprovalStatus>[
+  ApprovalStatus.approved,
+  ApprovalStatus.pending,
+  ApprovalStatus.collected,
+  ApprovalStatus.returned,
+];
+
 void main() {
   runApp(const PartApprovalDesktopApp());
 }
@@ -654,7 +662,9 @@ class _LoginCopy extends StatelessWidget {
         ConstrainedBox(
           constraints: BoxConstraints(maxWidth: compact ? 420 : 520),
           child: Text(
-            kIsWeb
+            kDemoMode
+                ? 'Demo mode is enabled for browser capture, so this screen uses the real Flutter UI with local sample data instead of the live backend.'
+                : kIsWeb
                 ? 'This project should connect to the WOD mobile API, but browser login can be blocked by the backend CSRF policy. For the same behavior as WOD, run it as a desktop app on macOS, Windows, or Linux.'
                 : 'This desktop client now authenticates against the live mobile API, loads /api/mobile/part-request, and auto-refreshes so new requests submitted from another platform appear here without a restart.',
             style: TextStyle(
@@ -1139,9 +1149,7 @@ class Sidebar extends StatelessWidget {
   final VoidCallback onLogout;
   final bool scrollable;
 
-  static const items = [
-    'Menu',
-  ];
+  static const items = ['Menu'];
 
   @override
   Widget build(BuildContext context) {
@@ -1639,7 +1647,7 @@ class RequestListPanel extends StatelessWidget {
                       selected: selectedStatus == null,
                       onTap: () => onStatusFilterSelected(null),
                     ),
-                    ...ApprovalStatus.values.map(
+                    ...kSelectableStatuses.map(
                       (status) => _StatusFilterChip(
                         label: status.label,
                         count: statusCounts[status] ?? 0,
@@ -2116,7 +2124,7 @@ class RequestRowCard extends StatelessWidget {
         final statusWrap = Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: ApprovalStatus.values.map((status) {
+          children: kSelectableStatuses.map((status) {
             return StatusChip(
               label: status.label,
               active: request.status == status,
@@ -2412,18 +2420,25 @@ class _EditableInputBlock extends StatelessWidget {
 }
 
 enum ApprovalStatus {
-  newRequest(1, 'New', 'New'),
-  pending(2, 'Pending', 'Pending'),
-  collected(3, 'Collected', 'Collected'),
-  returned(4, 'Returned', 'Returned'),
-  used(5, 'Used', 'Used'),
-  disposed(6, 'Disposed', 'Disposed');
+  requested(1, 'Requested', 'Requested', aliases: ['new']),
+  approved(2, 'Approved', 'Approved'),
+  pending(3, 'Pending', 'Pending'),
+  collected(4, 'Collected', 'Collected'),
+  returned(5, 'Returned', 'Returned'),
+  used(6, 'Used', 'Used'),
+  disposed(7, 'Disposed', 'Disposed');
 
-  const ApprovalStatus(this.apiValue, this.label, this.shortLabel);
+  const ApprovalStatus(
+    this.apiValue,
+    this.label,
+    this.shortLabel, {
+    this.aliases = const [],
+  });
 
   final int apiValue;
   final String label;
   final String shortLabel;
+  final List<String> aliases;
 
   bool get isClosed => this == ApprovalStatus.disposed;
 
@@ -2437,10 +2452,8 @@ enum ApprovalStatus {
       final nestedName = rawStatus['name']?.toString().toLowerCase();
       if (nestedName != null) {
         return values.firstWhere(
-          (status) =>
-              status.shortLabel.toLowerCase() == nestedName ||
-              status.label.toLowerCase() == nestedName,
-          orElse: () => ApprovalStatus.newRequest,
+          (status) => status.matchesName(nestedName),
+          orElse: () => ApprovalStatus.requested,
         );
       }
     }
@@ -2449,26 +2462,36 @@ enum ApprovalStatus {
     if (intValue != null) {
       return values.firstWhere(
         (status) => status.apiValue == intValue,
-        orElse: () => ApprovalStatus.newRequest,
+        orElse: () => ApprovalStatus.requested,
       );
     }
 
     final stringValue = '$rawStatus'.toLowerCase();
     return values.firstWhere(
-      (status) =>
-          status.shortLabel.toLowerCase() == stringValue ||
-          status.label.toLowerCase() == stringValue,
-      orElse: () => ApprovalStatus.newRequest,
+      (status) => status.matchesName(stringValue),
+      orElse: () => ApprovalStatus.requested,
     );
+  }
+
+  bool matchesName(String value) {
+    return shortLabel.toLowerCase() == value ||
+        label.toLowerCase() == value ||
+        aliases.any((alias) => alias.toLowerCase() == value);
   }
 
   StatusChipStyle get style {
     switch (this) {
-      case ApprovalStatus.newRequest:
+      case ApprovalStatus.requested:
         return const StatusChipStyle(
           background: Color(0xFFF3F7FF),
           border: Color(0xFFD9E5FF),
           foreground: Color(0xFF4A6ACF),
+        );
+      case ApprovalStatus.approved:
+        return const StatusChipStyle(
+          background: Color(0xFFECF6F0),
+          border: Color(0xFFCBE4D4),
+          foreground: Color(0xFF2D7B4F),
         );
       case ApprovalStatus.pending:
         return const StatusChipStyle(
